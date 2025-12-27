@@ -7,7 +7,7 @@ Uses simple polling (not watchdog) for NFS/SMB compatibility.
 import os
 import time
 from db import get_connection
-from scanner import run_scan, get_stats, get_indexer_state, get_poll_interval
+from scanner import run_scan, get_stats, get_indexer_state, get_poll_interval, recover_stuck_jobs
 from enrichment import run_enrichment
 
 
@@ -61,6 +61,11 @@ def main():
     cur.close()
     conn.close()
     
+    # Recover any stuck jobs from previous runs
+    recovered = recover_stuck_jobs(timeout_minutes=30)
+    if recovered > 0:
+        print(f"↻ Recovered {recovered} stuck job(s) from previous run")
+    
     # Main polling loop
     while True:
         state = get_indexer_state()
@@ -72,8 +77,13 @@ def main():
         
         # Run scan
         print("\n🔍 Scanning watch folders...")
-        total, new = run_scan()
-        print(f"✓ Scan complete. Found {total} videos, {new} new.")
+        total, new, updated = run_scan()
+        status_parts = [f"Found {total} videos"]
+        if new > 0:
+            status_parts.append(f"{new} new")
+        if updated > 0:
+            status_parts.append(f"{updated} modified")
+        print(f"✓ Scan complete. {', '.join(status_parts)}.")
         
         # Get pending count
         conn = get_connection()

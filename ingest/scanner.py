@@ -250,30 +250,87 @@ def scan_folder(folder_path):
 
 def add_file_to_db(filepath):
     """
-    Add a video file to the database if it doesn't exist.
+    Add a video file to the database if it doesn't exist,
+    or re-queue if the file has been modified since last indexing.
     Extracts both video and file metadata.
-    Returns (file_id, is_new).
+    Returns (file_id, is_new, was_updated).
     """
     conn = get_connection()
     cur = conn.cursor()
     
+    # Get current file's modified time
+    current_mtime = None
+    try:
+        stat = os.stat(filepath)
+        current_mtime = datetime.fromtimestamp(stat.st_mtime)
+    except Exception:
+        pass
+    
     # Check if file already exists
-    cur.execute("SELECT id, deleted_at FROM files WHERE path = %s", (filepath,))
+    cur.execute("SELECT id, deleted_at, file_modified_at, indexed_at FROM files WHERE path = %s", (filepath,))
     existing = cur.fetchone()
     
     if existing:
-        file_id, deleted_at = existing
+        file_id, deleted_at, db_mtime, indexed_at = existing
+        
         if deleted_at is not None:
             # File was soft-deleted but reappeared - resurrect it
             cur.execute("UPDATE files SET deleted_at = NULL WHERE id = %s", (file_id,))
             conn.commit()
             cur.close()
             conn.close()
-            return file_id, True  # Treat as new for re-enrichment
+            return file_id, True, False  # Treat as new for re-enrichment
+        
+        # Check if file has been modified since last indexing
+        if indexed_at is not None and current_mtime is not None and db_mtime is not None:
+            # Compare timestamps (allow 1 second tolerance for filesystem precision)
+            if current_mtime > db_mtime and (current_mtime - db_mtime).total_seconds() > 1:
+                # File was modified - update metadata and re-queue
+                file_meta = get_file_metadata(filepath)
+                video_meta = get_video_metadata(filepath)
+                
+                cur.execute("""
+                    UPDATE files SET
+                        file_modified_at = %s,
+                        file_size_bytes = %s,
+                        duration_seconds = %s,
+                        width = %s,
+                        height = %s,
+                        fps = %s,
+                        codec = %s,
+                        audio_tracks = %s,
+                        indexed_at = NULL
+                    WHERE id = %s
+                """, (
+                    file_meta['file_modified_at'],
+                    file_meta['file_size_bytes'],
+                    video_meta['duration_seconds'],
+                    video_meta['width'],
+                    video_meta['height'],
+                    video_meta['fps'],
+                    video_meta['codec'],
+                    video_meta['audio_tracks'],
+                    file_id
+                ))
+                
+                # Clear old enrichment data
+                cur.execute("DELETE FROM scenes WHERE file_id = %s", (file_id,))
+                
+                # Re-queue for enrichment (delete old entry if exists, then insert new)
+                cur.execute("DELETE FROM enrichment_queue WHERE file_id = %s", (file_id,))
+                cur.execute("""
+                    INSERT INTO enrichment_queue (file_id, status, queued_at)
+                    VALUES (%s, 'pending', NOW())
+                """, (file_id,))
+                
+                conn.commit()
+                cur.close()
+                conn.close()
+                return file_id, False, True  # Existing file, was updated
         
         cur.close()
         conn.close()
-        return file_id, False
+        return file_id, False, False
     
     # Get metadata
     video_meta = get_video_metadata(filepath)
@@ -317,7 +374,32 @@ def add_file_to_db(filepath):
     cur.close()
     conn.close()
     
-    return file_id, True
+    return file_id, True, False  # New file
+
+
+def recover_stuck_jobs(timeout_minutes=30):
+    """
+    Reset jobs stuck in 'processing' state for longer than timeout.
+    This handles crashes/interruptions during enrichment.
+    Returns number of recovered jobs.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        UPDATE enrichment_queue
+        SET status = 'pending', started_at = NULL
+        WHERE status = 'processing'
+          AND started_at < NOW() - INTERVAL '%s minutes'
+        RETURNING id
+    """, (timeout_minutes,))
+    
+    recovered = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    return recovered
 
 
 def mark_missing_files(watch_folders):
@@ -420,22 +502,26 @@ def run_scan():
     
     if not watch_folders:
         print("  No watch folders configured")
-        return 0, 0
+        return 0, 0, 0
     
     total_found = 0
     new_added = 0
+    updated = 0
     
-    # First pass: find new files
+    # First pass: find new/modified files
     for folder in watch_folders:
         print(f"  Scanning: {folder}")
         videos = scan_folder(folder)
         total_found += len(videos)
         
         for filepath in videos:
-            file_id, is_new = add_file_to_db(filepath)
+            file_id, is_new, was_updated = add_file_to_db(filepath)
             if is_new:
                 new_added += 1
                 print(f"    + {os.path.basename(filepath)}")
+            elif was_updated:
+                updated += 1
+                print(f"    ↻ {os.path.basename(filepath)} (modified)")
     
     # Second pass: mark missing files
     deleted = mark_missing_files(watch_folders)
@@ -447,4 +533,4 @@ def run_scan():
     set_config('last_scan_at', datetime.now().isoformat())
     set_config('last_scan_duration_ms', duration_ms)
     
-    return total_found, new_added
+    return total_found, new_added, updated

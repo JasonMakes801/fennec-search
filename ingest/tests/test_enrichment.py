@@ -24,7 +24,7 @@ class TestSceneDetection:
     
     def test_detect_scenes_normal(self, clean_db, test_video_normal):
         """Should detect at least one scene."""
-        file_id, _ = add_file_to_db(test_video_normal)
+        file_id, _, _ = add_file_to_db(test_video_normal)
         
         num_scenes = detect_scenes(test_video_normal, file_id)
         
@@ -40,7 +40,7 @@ class TestSceneDetection:
     
     def test_detect_scenes_multi(self, clean_db, test_video_multi_scene):
         """Should detect multiple scenes in longer clip."""
-        file_id, _ = add_file_to_db(test_video_multi_scene)
+        file_id, _, _ = add_file_to_db(test_video_multi_scene)
         
         num_scenes = detect_scenes(test_video_multi_scene, file_id)
         
@@ -49,7 +49,7 @@ class TestSceneDetection:
     
     def test_detect_scenes_corrupted(self, clean_db, test_video_corrupted):
         """Should handle corrupted video gracefully."""
-        file_id, _ = add_file_to_db(test_video_corrupted)
+        file_id, _, _ = add_file_to_db(test_video_corrupted)
         
         # Should not crash, return 0 or raise handled exception
         try:
@@ -61,7 +61,7 @@ class TestSceneDetection:
     
     def test_poster_frames_created(self, clean_db, test_video_normal):
         """Should create poster frame images."""
-        file_id, _ = add_file_to_db(test_video_normal)
+        file_id, _, _ = add_file_to_db(test_video_normal)
         detect_scenes(test_video_normal, file_id)
         
         cur = clean_db.cursor()
@@ -84,7 +84,7 @@ class TestWhisperTranscription:
     
     def test_transcribe_with_audio(self, clean_db, test_video_normal):
         """Should transcribe video with audio."""
-        file_id, _ = add_file_to_db(test_video_normal)
+        file_id, _, _ = add_file_to_db(test_video_normal)
         detect_scenes(test_video_normal, file_id)
         
         num_segments = transcribe_video(test_video_normal, file_id)
@@ -95,7 +95,7 @@ class TestWhisperTranscription:
     
     def test_skip_no_audio(self, clean_db, test_video_no_audio):
         """Should skip transcription for video without audio."""
-        file_id, _ = add_file_to_db(test_video_no_audio)
+        file_id, _, _ = add_file_to_db(test_video_no_audio)
         detect_scenes(test_video_no_audio, file_id)
         
         num_segments = transcribe_video(test_video_no_audio, file_id)
@@ -105,7 +105,7 @@ class TestWhisperTranscription:
     
     def test_transcribe_corrupted(self, clean_db, test_video_corrupted):
         """Should handle corrupted video gracefully."""
-        file_id, _ = add_file_to_db(test_video_corrupted)
+        file_id, _, _ = add_file_to_db(test_video_corrupted)
         
         # Should not crash
         try:
@@ -120,7 +120,7 @@ class TestCLIPEmbedding:
     
     def test_embed_scenes(self, clean_db, test_video_normal):
         """Should generate embeddings for scenes."""
-        file_id, _ = add_file_to_db(test_video_normal)
+        file_id, _, _ = add_file_to_db(test_video_normal)
         detect_scenes(test_video_normal, file_id)
         
         num_embedded = embed_scenes_for_file(file_id)
@@ -144,7 +144,7 @@ class TestFaceDetection:
     
     def test_detect_faces(self, clean_db, test_video_normal):
         """Should detect faces if present."""
-        file_id, _ = add_file_to_db(test_video_normal)
+        file_id, _, _ = add_file_to_db(test_video_normal)
         detect_scenes(test_video_normal, file_id)
         
         num_faces = detect_faces_for_file(file_id)
@@ -154,7 +154,7 @@ class TestFaceDetection:
     
     def test_detect_faces_stores_bboxes(self, clean_db, test_video_normal):
         """Should store bounding boxes for detected faces."""
-        file_id, _ = add_file_to_db(test_video_normal)
+        file_id, _, _ = add_file_to_db(test_video_normal)
         detect_scenes(test_video_normal, file_id)
         detect_faces_for_file(file_id)
         
@@ -179,7 +179,7 @@ class TestFullEnrichment:
     
     def test_enrich_file_complete(self, clean_db, test_video_normal):
         """Should run full enrichment pipeline."""
-        file_id, _ = add_file_to_db(test_video_normal)
+        file_id, _, _ = add_file_to_db(test_video_normal)
         
         # Add to queue
         cur = clean_db.cursor()

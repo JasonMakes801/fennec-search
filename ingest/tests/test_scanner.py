@@ -136,11 +136,12 @@ class TestDatabaseOperations:
     
     def test_add_file_to_db(self, clean_db, test_video_normal):
         """Should add new file to database."""
-        file_id, is_new = add_file_to_db(test_video_normal)
+        file_id, is_new, was_updated = add_file_to_db(test_video_normal)
         
         assert file_id is not None
         assert file_id > 0
         assert is_new is True
+        assert was_updated is False
         
         # Verify in database
         cur = clean_db.cursor()
@@ -154,13 +155,15 @@ class TestDatabaseOperations:
     
     def test_add_file_duplicate(self, clean_db, test_video_normal):
         """Should not duplicate files on re-scan."""
-        file_id1, is_new1 = add_file_to_db(test_video_normal)
-        file_id2, is_new2 = add_file_to_db(test_video_normal)
+        file_id1, is_new1, updated1 = add_file_to_db(test_video_normal)
+        file_id2, is_new2, updated2 = add_file_to_db(test_video_normal)
         
         # Should return same ID, marked as not new
         assert file_id2 == file_id1
         assert is_new1 is True
         assert is_new2 is False
+        assert updated1 is False
+        assert updated2 is False
         
         # Should only have one file in DB
         cur = clean_db.cursor()
@@ -175,7 +178,7 @@ class TestDatabaseOperations:
         # Copy test video to watch folder
         dest = os.path.join(temp_watch_folder, "video.mp4")
         shutil.copy(test_video_normal, dest)
-        file_id, _ = add_file_to_db(dest)
+        file_id, _, _ = add_file_to_db(dest)
         
         # Verify it's not deleted
         cur = clean_db.cursor()
@@ -208,7 +211,7 @@ class TestStats:
     
     def test_get_stats_with_data(self, clean_db, test_video_normal):
         """Should count files correctly."""
-        file_id, _ = add_file_to_db(test_video_normal)
+        file_id, _, _ = add_file_to_db(test_video_normal)
         
         stats = get_stats()
         assert stats['total_files'] == 1
