@@ -1,0 +1,40 @@
+# Docker Compose for isolated test runs
+# Usage: docker compose -f docker-compose.test.yml run --rm test
+
+name: fennec-test  # Separate project name to avoid conflicts with production
+
+services:
+  test-db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: fennec_test
+      POSTGRES_PASSWORD: fennec_test
+      POSTGRES_DB: fennec_test
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fennec_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    # No persistent volume - fresh DB each run
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  test:
+    build: ./ingest
+    depends_on:
+      test-db:
+        condition: service_healthy
+    environment:
+      DB_HOST: test-db
+      DB_PORT: 5432
+      DB_NAME: fennec_test
+      DB_USER: fennec_test
+      DB_PASSWORD: fennec_test
+    volumes:
+      # Mount source as read-write so pytest cache works
+      - ./ingest:/app
+      - ./ingest/tests/fixtures:/app/tests/fixtures:ro
+    working_dir: /app
+    command: pytest -v --tb=short

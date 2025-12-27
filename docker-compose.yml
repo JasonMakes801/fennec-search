@@ -1,0 +1,105 @@
+# ==============================================================================
+# MEDIA FOLDERS - Edit this section to configure your video directories
+# ==============================================================================
+# Add the root paths where your video files live.
+# These mounts are shared by both ingest and server containers.
+#
+# Format: /host/path:/container/path:ro
+# The `:ro` means read-only (Fennec never modifies your media files)
+#
+# Examples:
+#   - /Videos:/Videos:ro           # Simple: same path inside container
+#   - /mnt/nas:/mnt/nas:ro         # NAS mount
+#   - /Volumes:/Volumes:ro         # macOS external drives
+# ==============================================================================
+
+x-media-volumes: &media-volumes
+  # macOS defaults - edit as needed:
+  - /Users:/users:ro
+  - /Volumes:/volumes:ro
+  # Linux examples (uncomment as needed):
+  # - /home:/home:ro
+  # - /mnt:/mnt:ro
+  # - /media:/media:ro
+
+# ==============================================================================
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: fennec-db
+    environment:
+      POSTGRES_USER: fennec
+      POSTGRES_PASSWORD: fennec
+      POSTGRES_DB: fennec
+    ports:
+      - "5434:5432"
+    volumes:
+      - fennec_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fennec"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ingest:
+    build: ./ingest
+    container_name: fennec-ingest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: fennec
+      DB_USER: fennec
+      DB_PASSWORD: fennec
+      PYTHONUNBUFFERED: 1
+    volumes:
+      # App volumes
+      - ./ingest:/app
+      - fennec_posters:/app/posters
+      - fennec_models:/root/.cache
+      # Media volumes (from x-media-volumes above)
+      - /Users:/users:ro
+      - /Volumes:/volumes:ro
+
+  server:
+    build: ./server
+    container_name: fennec-server
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: fennec
+      DB_USER: fennec
+      DB_PASSWORD: fennec
+      POSTERS_DIR: /app/posters
+      PYTHONUNBUFFERED: 1
+    volumes:
+      # App volumes
+      - ./server:/app
+      - fennec_posters:/app/posters:ro
+      # Media volumes (keep in sync with ingest above!)
+      - /Users:/users:ro
+      - /Volumes:/volumes:ro
+    ports:
+      - "8000:8000"
+
+  ui:
+    build: ./ui
+    container_name: fennec-ui
+    depends_on:
+      - server
+    ports:
+      - "8080:80"
+    environment:
+      - NODE_ENV=production
+
+volumes:
+  fennec_data:
+  fennec_posters:
+  fennec_models:

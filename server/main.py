@@ -1,0 +1,678 @@
+"""
+Fennec API Server
+FastAPI backend for video search with CLIP, Whisper, and face filtering
+"""
+
+import os
+import json
+from pathlib import Path
+from typing import Optional, List, Any
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import numpy as np
+
+from db import fetch_one, fetch_all, execute
+
+app = FastAPI(title="Fennec API", version="0.1.0")
+
+# CORS for local development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+POSTERS_DIR = os.environ.get('POSTERS_DIR', '/app/posters')
+
+# Load CLIP model lazily
+_clip_model = None
+_clip_tokenizer = None
+
+def get_clip_model():
+    """Lazy load CLIP model for text embedding."""
+    global _clip_model, _clip_tokenizer
+    if _clip_model is None:
+        try:
+            import open_clip
+            _clip_model, _, _ = open_clip.create_model_and_transforms(
+                'ViT-B-32', pretrained='laion2b_s34b_b79k'
+            )
+            _clip_tokenizer = open_clip.get_tokenizer('ViT-B-32')
+            _clip_model.eval()
+        except Exception as e:
+            print(f"Warning: Could not load CLIP model: {e}")
+            return None, None
+    return _clip_model, _clip_tokenizer
+
+def embed_text(text: str) -> Optional[List[float]]:
+    """Embed text using CLIP."""
+    import torch
+    model, tokenizer = get_clip_model()
+    if model is None:
+        return None
+    
+    with torch.no_grad():
+        tokens = tokenizer([text])
+        embedding = model.encode_text(tokens)
+        embedding = embedding / embedding.norm(dim=-1, keepdim=True)
+        return embedding[0].cpu().numpy().tolist()
+
+
+def get_search_thresholds() -> dict:
+    """Get search thresholds from config with fallback defaults."""
+    defaults = {
+        'visual': 0.10,
+        'visual_match': 0.20,
+        'face': 0.25
+    }
+    try:
+        visual = fetch_one("SELECT value FROM config WHERE key = 'search_threshold_visual'")
+        visual_match = fetch_one("SELECT value FROM config WHERE key = 'search_threshold_visual_match'")
+        face = fetch_one("SELECT value FROM config WHERE key = 'search_threshold_face'")
+        
+        return {
+            'visual': float(visual['value']) if visual and visual.get('value') is not None else defaults['visual'],
+            'visual_match': float(visual_match['value']) if visual_match and visual_match.get('value') is not None else defaults['visual_match'],
+            'face': float(face['value']) if face and face.get('value') is not None else defaults['face']
+        }
+    except Exception:
+        return defaults
+
+
+# ============ Pydantic Models ============
+
+class ConfigValue(BaseModel):
+    value: Any
+
+
+# ============ Scenes Browse ============
+
+@app.get("/api/scenes")
+async def list_scenes(
+    limit: int = Query(40, le=200),
+    offset: int = Query(0, ge=0)
+):
+    """Browse scenes with pagination."""
+    scenes = fetch_all("""
+        SELECT 
+            s.id,
+            s.scene_index,
+            s.start_tc as start_time,
+            s.end_tc as end_time,
+            s.transcript,
+            s.poster_first_path,
+            s.poster_frame_path,
+            f.id as file_id,
+            f.filename,
+            f.path,
+            f.duration_seconds,
+            f.width,
+            f.height,
+            f.fps,
+            f.codec,
+            f.audio_tracks,
+            f.file_size_bytes,
+            f.file_modified_at
+        FROM scenes s
+        JOIN files f ON s.file_id = f.id
+        WHERE f.deleted_at IS NULL
+        ORDER BY s.scene_index
+        LIMIT %s OFFSET %s
+    """, (limit, offset))
+    
+    # Get total count
+    total = fetch_one("SELECT COUNT(*) as count FROM scenes s JOIN files f ON s.file_id = f.id WHERE f.deleted_at IS NULL")
+    
+    # Add faces to each scene
+    for scene in scenes:
+        faces = fetch_all("""
+            SELECT id, bbox_x, bbox_y, bbox_w, bbox_h
+            FROM faces
+            WHERE scene_id = %s
+        """, (scene['id'],))
+        scene['faces'] = [
+            {'id': f['id'], 'bbox': [f['bbox_x'], f['bbox_y'], f['bbox_w'], f['bbox_h']]}
+            for f in faces
+        ]
+    
+    return {"scenes": scenes, "total": total['count'] if total else 0}
+
+
+@app.get("/api/scene/{scene_index}")
+async def get_scene(scene_index: int):
+    """Get single scene details."""
+    scene = fetch_one("""
+        SELECT 
+            s.id,
+            s.scene_index,
+            s.start_tc as start_time,
+            s.end_tc as end_time,
+            s.transcript,
+            s.poster_first_path,
+            s.poster_frame_path,
+            f.id as file_id,
+            f.filename,
+            f.path,
+            f.duration_seconds,
+            f.width,
+            f.height,
+            f.fps,
+            f.codec,
+            f.audio_tracks,
+            f.file_size_bytes,
+            f.file_modified_at
+        FROM scenes s
+        JOIN files f ON s.file_id = f.id
+        WHERE s.scene_index = %s AND f.deleted_at IS NULL
+    """, (scene_index,))
+    
+    if not scene:
+        raise HTTPException(status_code=404, detail="Scene not found")
+    
+    # Get faces
+    faces = fetch_all("""
+        SELECT id, bbox_x, bbox_y, bbox_w, bbox_h
+        FROM faces
+        WHERE scene_id = %s
+    """, (scene['id'],))
+    scene['faces'] = [
+        {'id': f['id'], 'bbox': [f['bbox_x'], f['bbox_y'], f['bbox_w'], f['bbox_h']]}
+        for f in faces
+    ]
+    
+    return scene
+
+
+# ============ Combined Search ============
+
+@app.get("/api/search")
+async def search(
+    visual: Optional[str] = Query(None, description="Visual search query (CLIP text)"),
+    visual_threshold: Optional[float] = Query(None, description="Minimum visual similarity (uses config default if not specified)"),
+    transcript: Optional[str] = Query(None, description="Search in transcripts"),
+    face_scene: Optional[int] = Query(None, description="Scene index for face filter"),
+    face_index: Optional[int] = Query(None, description="Face index within scene"),
+    face_threshold: Optional[float] = Query(None, description="Minimum face similarity (uses config default if not specified)"),
+    visual_match_scene: Optional[int] = Query(None, description="Scene index for visual match"),
+    visual_match_threshold: Optional[float] = Query(None, description="Minimum visual match similarity (uses config default if not specified)"),
+    tc_min: Optional[float] = Query(None, description="Minimum timecode in seconds"),
+    tc_max: Optional[float] = Query(None, description="Maximum timecode in seconds"),
+    # Metadata filters
+    path: Optional[str] = Query(None, description="Filter by path substring"),
+    duration_min: Optional[float] = Query(None, description="Minimum file duration in seconds"),
+    duration_max: Optional[float] = Query(None, description="Maximum file duration in seconds"),
+    width_min: Optional[int] = Query(None, description="Minimum video width"),
+    width_max: Optional[int] = Query(None, description="Maximum video width"),
+    height_min: Optional[int] = Query(None, description="Minimum video height"),
+    height_max: Optional[int] = Query(None, description="Maximum video height"),
+    fps_min: Optional[float] = Query(None, description="Minimum frame rate"),
+    fps_max: Optional[float] = Query(None, description="Maximum frame rate"),
+    codec: Optional[str] = Query(None, description="Filter by codec (substring match)"),
+    limit: int = Query(200, le=500)
+):
+    """
+    Combined search with restrictive/exclusive filters.
+    Each filter reduces the result set.
+    Threshold defaults come from config if not specified in query.
+    """
+    
+    # Get threshold defaults from config
+    config_thresholds = get_search_thresholds()
+    if visual_threshold is None:
+        visual_threshold = config_thresholds['visual']
+    if visual_match_threshold is None:
+        visual_match_threshold = config_thresholds['visual_match']
+    if face_threshold is None:
+        face_threshold = config_thresholds['face']
+    
+    # Start with all scenes
+    base_query = """
+        SELECT 
+            s.id,
+            s.scene_index,
+            s.start_tc as start_time,
+            s.end_tc as end_time,
+            s.transcript,
+            s.poster_first_path,
+            s.poster_frame_path,
+            s.clip_embedding,
+            f.id as file_id,
+            f.filename,
+            f.path,
+            f.duration_seconds,
+            f.width,
+            f.height,
+            f.fps,
+            f.codec,
+            f.audio_tracks,
+            f.file_size_bytes,
+            f.file_modified_at
+        FROM scenes s
+        JOIN files f ON s.file_id = f.id
+        WHERE f.deleted_at IS NULL
+    """
+    params = []
+    
+    # Timecode filter
+    if tc_min is not None:
+        base_query += " AND s.start_tc >= %s"
+        params.append(tc_min)
+    if tc_max is not None:
+        base_query += " AND s.end_tc <= %s"
+        params.append(tc_max)
+    
+    # Transcript filter (substring match)
+    if transcript:
+        base_query += " AND s.transcript ILIKE %s"
+        params.append(f'%{transcript}%')
+    
+    # Path filter (substring match)
+    if path:
+        base_query += " AND f.path ILIKE %s"
+        params.append(f'%{path}%')
+    
+    # Duration filter
+    if duration_min is not None:
+        base_query += " AND f.duration_seconds >= %s"
+        params.append(duration_min)
+    if duration_max is not None:
+        base_query += " AND f.duration_seconds <= %s"
+        params.append(duration_max)
+    
+    # Resolution filters
+    if width_min is not None:
+        base_query += " AND f.width >= %s"
+        params.append(width_min)
+    if width_max is not None:
+        base_query += " AND f.width <= %s"
+        params.append(width_max)
+    if height_min is not None:
+        base_query += " AND f.height >= %s"
+        params.append(height_min)
+    if height_max is not None:
+        base_query += " AND f.height <= %s"
+        params.append(height_max)
+    
+    # FPS filter
+    if fps_min is not None:
+        base_query += " AND f.fps >= %s"
+        params.append(fps_min)
+    if fps_max is not None:
+        base_query += " AND f.fps <= %s"
+        params.append(fps_max)
+    
+    # Codec filter (substring match)
+    if codec:
+        base_query += " AND f.codec ILIKE %s"
+        params.append(f'%{codec}%')
+    
+    base_query += " ORDER BY s.scene_index"
+    
+    # Fetch base results
+    scenes = fetch_all(base_query, tuple(params) if params else None)
+    
+    results = []
+    
+    # Process visual text search with CLIP
+    if visual:
+        text_embedding = embed_text(visual)
+        if text_embedding:
+            text_emb_np = np.array(text_embedding)
+            for scene in scenes:
+                emb = scene.get('clip_embedding')
+                if emb is not None:
+                    similarity = float(np.dot(text_emb_np, emb))
+                    if similarity >= visual_threshold:
+                        scene['similarity'] = similarity
+                        results.append(scene)
+            # Sort by similarity descending
+            results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+        else:
+            # Fallback: no CLIP model, just use transcript match
+            results = scenes
+    else:
+        results = scenes
+    
+    # Visual match filter (find scenes similar to reference scene)
+    if visual_match_scene is not None:
+        ref_scene = fetch_one("""
+            SELECT clip_embedding FROM scenes WHERE scene_index = %s
+        """, (visual_match_scene,))
+        
+        if ref_scene and ref_scene.get('clip_embedding') is not None:
+            ref_emb = ref_scene['clip_embedding']
+            filtered = []
+            for scene in results:
+                emb = scene.get('clip_embedding')
+                if emb is not None:
+                    similarity = float(np.dot(ref_emb, emb))
+                    if similarity >= visual_match_threshold:
+                        scene['similarity'] = similarity
+                        filtered.append(scene)
+            # Sort by similarity descending
+            filtered.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+            results = filtered
+    
+    # Face filter
+    if face_scene is not None and face_index is not None:
+        # Get reference face embedding
+        ref_face = fetch_one("""
+            SELECT fa.embedding
+            FROM faces fa
+            JOIN scenes s ON fa.scene_id = s.id
+            WHERE s.scene_index = %s
+            ORDER BY fa.id
+            LIMIT 1 OFFSET %s
+        """, (face_scene, face_index))
+        
+        if ref_face and ref_face.get('embedding') is not None:
+            ref_emb = ref_face['embedding']
+            scene_ids = [s['id'] for s in results]
+            
+            if scene_ids:
+                # Find scenes with matching faces
+                placeholders = ','.join(['%s'] * len(scene_ids))
+                face_matches = fetch_all(f"""
+                    SELECT DISTINCT scene_id, embedding
+                    FROM faces
+                    WHERE scene_id IN ({placeholders})
+                """, tuple(scene_ids))
+                
+                # Calculate face similarities
+                scene_face_sims = {}
+                for fm in face_matches:
+                    face_emb = fm.get('embedding')
+                    if face_emb is not None:
+                        similarity = float(np.dot(ref_emb, face_emb))
+                        scene_id = fm['scene_id']
+                        if scene_id not in scene_face_sims or similarity > scene_face_sims[scene_id]:
+                            scene_face_sims[scene_id] = similarity
+                
+                # Filter by threshold
+                filtered = []
+                for scene in results:
+                    face_sim = scene_face_sims.get(scene['id'], 0)
+                    if face_sim >= face_threshold:
+                        scene['face_similarity'] = face_sim
+                        filtered.append(scene)
+                
+                results = filtered
+    
+    # Add faces to results
+    for scene in results:
+        faces = fetch_all("""
+            SELECT id, bbox_x, bbox_y, bbox_w, bbox_h
+            FROM faces
+            WHERE scene_id = %s
+        """, (scene['id'],))
+        scene['faces'] = [
+            {'id': f['id'], 'bbox': [f['bbox_x'], f['bbox_y'], f['bbox_w'], f['bbox_h']]}
+            for f in faces
+        ]
+        # Remove embedding from response
+        scene.pop('clip_embedding', None)
+    
+    return {"results": results[:limit]}
+
+
+# ============ Thumbnails ============
+
+@app.get("/api/thumbnail/{scene_id}")
+async def get_thumbnail(scene_id: str):
+    """Serve poster frame (mid-scene) for a scene. Used for results grid."""
+    # Handle scene_XXXX format
+    if scene_id.startswith('scene_'):
+        scene_index = int(scene_id.replace('scene_', ''))
+        scene = fetch_one(
+            "SELECT poster_frame_path FROM scenes WHERE scene_index = %s",
+            (scene_index,)
+        )
+    else:
+        scene = fetch_one(
+            "SELECT poster_frame_path FROM scenes WHERE id = %s",
+            (int(scene_id),)
+        )
+    
+    if not scene or not scene['poster_frame_path']:
+        raise HTTPException(status_code=404, detail="Thumbnail not found")
+    
+    poster_path = scene['poster_frame_path']
+    
+    # Handle both absolute and relative paths
+    if not os.path.isabs(poster_path):
+        poster_path = os.path.join(POSTERS_DIR, poster_path)
+    
+    if not os.path.exists(poster_path):
+        raise HTTPException(status_code=404, detail="Thumbnail file not found")
+    
+    # Determine media type
+    media_type = "image/webp"
+    if poster_path.endswith('.jpg') or poster_path.endswith('.jpeg'):
+        media_type = "image/jpeg"
+    elif poster_path.endswith('.png'):
+        media_type = "image/png"
+    
+    return FileResponse(poster_path, media_type=media_type)
+
+
+@app.get("/api/first-frame/{scene_id}")
+async def get_first_frame(scene_id: str):
+    """Serve first frame of a scene. Used for frame-accurate player initial display."""
+    # Handle scene_XXXX format
+    if scene_id.startswith('scene_'):
+        scene_index = int(scene_id.replace('scene_', ''))
+        scene = fetch_one(
+            "SELECT poster_first_path, poster_frame_path FROM scenes WHERE scene_index = %s",
+            (scene_index,)
+        )
+    else:
+        scene = fetch_one(
+            "SELECT poster_first_path, poster_frame_path FROM scenes WHERE id = %s",
+            (int(scene_id),)
+        )
+    
+    if not scene:
+        raise HTTPException(status_code=404, detail="Scene not found")
+    
+    # Use first frame if available, fall back to mid frame
+    poster_path = scene.get('poster_first_path') or scene.get('poster_frame_path')
+    if not poster_path:
+        raise HTTPException(status_code=404, detail="First frame not found")
+    
+    # Handle both absolute and relative paths
+    if not os.path.isabs(poster_path):
+        poster_path = os.path.join(POSTERS_DIR, poster_path)
+    
+    if not os.path.exists(poster_path):
+        raise HTTPException(status_code=404, detail="First frame file not found")
+    
+    # Determine media type
+    media_type = "image/webp"
+    if poster_path.endswith('.jpg') or poster_path.endswith('.jpeg'):
+        media_type = "image/jpeg"
+    elif poster_path.endswith('.png'):
+        media_type = "image/png"
+    
+    return FileResponse(poster_path, media_type=media_type)
+
+
+# ============ Video Streaming ============
+
+@app.get("/api/video/{file_id}")
+async def serve_video(file_id: int):
+    """Serve video file for playback."""
+    file = fetch_one("""
+        SELECT path FROM files WHERE id = %s AND deleted_at IS NULL
+    """, (file_id,))
+    
+    if not file or not file['path']:
+        raise HTTPException(status_code=404, detail="Video not found")
+    
+    video_path = file['path']
+    
+    if not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Video file not found on disk")
+    
+    # Determine media type based on extension
+    ext = os.path.splitext(video_path)[1].lower()
+    media_types = {
+        '.mp4': 'video/mp4',
+        '.mov': 'video/quicktime',
+        '.avi': 'video/x-msvideo',
+        '.mkv': 'video/x-matroska',
+        '.webm': 'video/webm',
+        '.mxf': 'application/mxf',
+    }
+    media_type = media_types.get(ext, 'video/mp4')
+    
+    return FileResponse(video_path, media_type=media_type)
+
+
+# ============ Files ============
+
+@app.get("/api/files")
+async def list_files(
+    limit: int = Query(50, le=500),
+    offset: int = 0
+):
+    """List indexed files (shots)."""
+    files = fetch_all("""
+        SELECT id, path, filename, duration_seconds, width, height, 
+               fps, codec, audio_tracks, file_size_bytes,
+               file_created_at, file_modified_at, parent_folder,
+               indexed_at, created_at
+        FROM files 
+        WHERE deleted_at IS NULL
+        ORDER BY indexed_at DESC
+        LIMIT %s OFFSET %s
+    """, (limit, offset))
+    
+    return {"files": files}
+
+
+@app.get("/api/files/{file_id}")
+async def get_file(file_id: int):
+    """Get file details with scenes."""
+    file = fetch_one("""
+        SELECT id, path, filename, duration_seconds, width, height, 
+               fps, codec, audio_tracks, file_size_bytes,
+               file_created_at, file_modified_at, parent_folder,
+               indexed_at, created_at
+        FROM files 
+        WHERE id = %s AND deleted_at IS NULL
+    """, (file_id,))
+    
+    if not file:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    scenes = fetch_all("""
+        SELECT id, scene_index, start_tc, end_tc, poster_first_path, poster_frame_path, transcript
+        FROM scenes
+        WHERE file_id = %s
+        ORDER BY scene_index
+    """, (file_id,))
+    
+    return {**file, "scenes": scenes}
+
+
+# ============ Stats ============
+
+@app.get("/api/stats")
+async def get_stats():
+    """Get index statistics."""
+    stats = fetch_one("""
+        SELECT 
+            (SELECT COUNT(*) FROM files WHERE deleted_at IS NULL) as files,
+            (SELECT COALESCE(SUM(duration_seconds), 0) FROM files WHERE deleted_at IS NULL) as total_duration,
+            (SELECT COUNT(*) FROM scenes) as scenes,
+            (SELECT COUNT(*) FROM faces) as faces,
+            (SELECT COUNT(DISTINCT cluster_id) FROM faces WHERE cluster_id IS NOT NULL) as unique_faces,
+            (SELECT COUNT(*) FROM scenes WHERE clip_embedding IS NOT NULL) as clip_complete,
+            (SELECT COUNT(*) FROM scenes WHERE transcript IS NOT NULL AND transcript != '') as whisper_complete,
+            (SELECT COUNT(DISTINCT scene_id) FROM faces) as faces_complete
+    """)
+    
+    return stats
+
+
+# ============ Faces ============
+
+@app.get("/api/faces")
+async def list_faces(limit: int = Query(50, le=200)):
+    """List face clusters with counts."""
+    faces = fetch_all("""
+        SELECT cluster_id, COUNT(*) as count
+        FROM faces
+        WHERE cluster_id IS NOT NULL
+        GROUP BY cluster_id
+        ORDER BY count DESC
+        LIMIT %s
+    """, (limit,))
+    
+    return {"faces": faces}
+
+
+# ============ Queue ============
+
+@app.get("/api/queue")
+async def get_queue():
+    """Get enrichment queue status."""
+    stats = fetch_one("""
+        SELECT 
+            COUNT(*) FILTER (WHERE status = 'pending') as pending,
+            COUNT(*) FILTER (WHERE status = 'processing') as processing,
+            COUNT(*) FILTER (WHERE status = 'complete') as complete,
+            COUNT(*) FILTER (WHERE status = 'failed') as failed
+        FROM enrichment_queue
+    """)
+    
+    return stats
+
+
+# ============ Config ============
+
+@app.get("/api/config/{key}")
+async def get_config(key: str):
+    """Get a single configuration value."""
+    row = fetch_one("SELECT value FROM config WHERE key = %s", (key,))
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Config key '{key}' not found")
+    return {"value": row['value']}
+
+
+@app.put("/api/config/{key}")
+async def set_config(key: str, body: ConfigValue):
+    """Set a configuration value."""
+    existing = fetch_one("SELECT key FROM config WHERE key = %s", (key,))
+    
+    if existing:
+        execute(
+            "UPDATE config SET value = %s WHERE key = %s",
+            (json.dumps(body.value), key)
+        )
+    else:
+        execute(
+            "INSERT INTO config (key, value) VALUES (%s, %s)",
+            (key, json.dumps(body.value))
+        )
+    
+    return {"success": True, "key": key, "value": body.value}
+
+
+# ============ Health ============
+
+@app.get("/api/health")
+async def health():
+    """Health check endpoint."""
+    try:
+        fetch_one("SELECT 1")
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unhealthy", "database": str(e)}
+        )

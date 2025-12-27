@@ -1,0 +1,161 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Font families */
+@layer base {
+  html {
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(38, 38, 38, 0.5);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(107, 114, 128, 0.6);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(156, 163, 175, 0.8);
+}
+
+/* Color swatch scroll */
+.color-scroll {
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.color-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+/* Face box overlay */
+.face-box {
+  @apply absolute border-2 border-green-500/60 rounded cursor-pointer transition-all;
+}
+
+.face-box:hover {
+  @apply border-green-400 bg-green-500/20;
+}
+
+/* Result card */
+.result-card {
+  @apply bg-[#171717] rounded-lg overflow-hidden cursor-pointer transition-all;
+}
+
+.result-card:hover {
+  @apply ring-2 ring-orange-500;
+}
+
+/* Thumbnail container */
+.thumbnail-container {
+  @apply relative overflow-hidden;
+}
+
+/* Filter lozenge */
+.filter-lozenge {
+  @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-all;
+}
+
+.filter-lozenge-visual {
+  @apply bg-amber-700/60 border-amber-600/40 text-amber-200;
+}
+
+.filter-lozenge-dialog {
+  @apply bg-slate-600/60 border-slate-500/40 text-slate-200;
+}
+
+.filter-lozenge-face {
+  @apply bg-teal-700/60 border-teal-600/40 text-teal-200;
+}
+
+.filter-lozenge-visual-match {
+  @apply bg-violet-700/60 border-violet-600/40 text-violet-200;
+}
+
+.filter-lozenge-metadata {
+  @apply bg-gray-700/60 border-gray-600/40 text-gray-300;
+}
+
+.filter-lozenge button {
+  @apply hover:text-red-300 ml-0.5 opacity-70 hover:opacity-100;
+}
+
+/* Input styling */
+.input-field {
+  @apply w-full bg-[#262626] text-white px-3 py-2 rounded text-sm focus:outline-none focus:ring-1 focus:ring-orange-500 border border-transparent;
+}
+
+.input-field::placeholder {
+  @apply text-gray-500;
+}
+
+/* Control group */
+.control-group {
+  @apply flex flex-col gap-1;
+}
+
+.control-label {
+  @apply text-xs text-gray-400 uppercase tracking-wide flex justify-between items-center;
+}
+
+/* Threshold input */
+.threshold-input {
+  @apply w-12 bg-[#171717] text-white px-1 py-0.5 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-orange-500;
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+  @apply fixed inset-0 bg-black/80 flex items-center justify-center z-50;
+}
+
+/* Similarity badge */
+.similarity-badge {
+  @apply absolute top-1 left-1 px-1.5 py-0.5 rounded text-xs font-medium text-white;
+}
+
+/* Nav link */
+.nav-link {
+  @apply px-3 py-1.5 rounded text-sm transition-colors text-gray-400;
+}
+
+.nav-link:hover {
+  @apply bg-[#262626] text-gray-200;
+}
+
+.nav-link.router-link-active {
+  @apply bg-orange-500 text-white;
+}
+
+/* Decorative font for branding */
+.font-display {
+  font-family: 'Righteous', cursive;
+}
+
+/* Monospace for timecodes */
+.font-mono {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+/* Metadata display */
+.metadata-item {
+  @apply flex flex-col gap-0.5 p-2 bg-[#0d0d0d] rounded;
+}
+
+.metadata-key {
+  @apply text-[10px] text-gray-500 uppercase tracking-wider font-medium;
+}
+
+.metadata-value {
+  @apply text-sm text-white;
+}
