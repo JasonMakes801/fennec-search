@@ -337,6 +337,12 @@ def add_file_to_db(filepath):
     file_meta = get_file_metadata(filepath)
     filename = os.path.basename(filepath)
     
+    # Validate: skip files FFprobe can't read (no duration = unreadable)
+    if video_meta['duration_seconds'] is None:
+        cur.close()
+        conn.close()
+        return None, False, False  # Unreadable file, skip it
+    
     # Insert new file with all metadata
     cur.execute(
         """
@@ -507,6 +513,7 @@ def run_scan():
     total_found = 0
     new_added = 0
     updated = 0
+    skipped = 0
     
     # First pass: find new/modified files
     for folder in watch_folders:
@@ -516,6 +523,10 @@ def run_scan():
         
         for filepath in videos:
             file_id, is_new, was_updated = add_file_to_db(filepath)
+            if file_id is None:
+                # File couldn't be read by FFprobe (R3D, BRAW, corrupted, etc.)
+                skipped += 1
+                continue
             if is_new:
                 new_added += 1
                 print(f"    + {os.path.basename(filepath)}")
@@ -528,9 +539,13 @@ def run_scan():
     if deleted > 0:
         print(f"  Marked {deleted} missing files as deleted")
     
+    # Log skipped files
+    if skipped > 0:
+        print(f"  Skipped {skipped} unreadable files (R3D, BRAW, corrupted, etc.)")
+    
     # Record scan metadata
     duration_ms = int((time.time() - start_time) * 1000)
     set_config('last_scan_at', datetime.now().isoformat())
     set_config('last_scan_duration_ms', duration_ms)
     
-    return total_found, new_added, updated
+    return total_found, new_added, updated, skipped

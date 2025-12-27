@@ -77,12 +77,14 @@ def main():
         
         # Run scan
         print("\n🔍 Scanning watch folders...")
-        total, new, updated = run_scan()
+        total, new, updated, skipped = run_scan()
         status_parts = [f"Found {total} videos"]
         if new > 0:
             status_parts.append(f"{new} new")
         if updated > 0:
             status_parts.append(f"{updated} modified")
+        if skipped > 0:
+            status_parts.append(f"{skipped} skipped")
         print(f"✓ Scan complete. {', '.join(status_parts)}.")
         
         # Get pending count
