@@ -2,7 +2,7 @@
   <img src="ui/public/fennec-logo-lg.png" alt="Fennec Logo" width="120">
 </p>
 
-<h1 align="center">Fennec</h1>
+<h1 align="center">Fennec Search</h1>
 
 <p align="center">
   <strong>Self-hosted video search using natural language, faces, and spoken dialog.</strong>
