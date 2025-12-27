@@ -39,6 +39,7 @@ def get_video_extensions():
         container_extensions = set()
         
         # Map demuxer names to extensions (common video containers)
+        # Note: Only include formats FFmpeg can actually decode, not just demux
         demuxer_to_ext = {
             'mov,mp4,m4a,3gp,3g2,mj2': ['.mov', '.mp4', '.m4v', '.3gp', '.3g2'],
             'avi': ['.avi'],
@@ -53,8 +54,8 @@ def get_video_extensions():
             'wtv': ['.wtv'],
             'dv': ['.dv'],
             'mj2': ['.mj2'],
-            'r3d': ['.r3d'],          # RED
             'bink': ['.bik', '.bk2'], # Bink video
+            # Excluded: r3d (RED), braw (Blackmagic) - require proprietary SDKs
         }
         
         # Check which demuxers are available
