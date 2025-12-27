@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="ui/public/fennec-logo.svg" alt="Fennec Logo" width="120">
+  <img src="ui/public/fennec-logo-lg.png" alt="Fennec Logo" width="120">
 </p>
 
 <h1 align="center">Fennec</h1>
