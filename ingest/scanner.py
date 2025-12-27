@@ -11,67 +11,30 @@ from datetime import datetime
 from db import get_connection
 
 
-# Cache for video extensions (populated once from FFmpeg)
-_video_extensions = None
+# Supported video extensions
+# Only formats FFmpeg can fully decode (not just demux)
+# Excludes: R3D (RED), BRAW (Blackmagic), ARI (ARRI) - require proprietary SDKs
+VIDEO_EXTENSIONS = {
+    '.mp4', '.mov', '.m4v', '.3gp', '.3g2',  # QuickTime/MP4
+    '.avi',                                   # AVI
+    '.mkv', '.webm',                          # Matroska
+    '.mxf',                                   # MXF (broadcast)
+    '.wmv', '.asf',                           # Windows Media
+    '.flv',                                   # Flash Video
+    '.ts', '.m2ts', '.mts',                   # MPEG Transport Stream
+    '.mpg', '.mpeg', '.vob',                  # MPEG Program Stream
+    '.ogv',                                   # Ogg Video
+    '.rm', '.rmvb',                           # RealMedia
+    '.wtv',                                   # Windows TV
+    '.dv',                                    # DV
+    '.mj2',                                   # Motion JPEG 2000
+    '.bik', '.bk2',                           # Bink Video
+}
 
 
 def get_video_extensions():
-    """
-    Query FFmpeg for supported demuxer formats and return file extensions.
-    Cached after first call.
-    """
-    global _video_extensions
-    if _video_extensions is not None:
-        return _video_extensions
-    
-    # Default fallback if FFmpeg query fails
-    fallback = {'.mp4', '.mov', '.avi', '.mkv', '.webm', '.mxf', '.m4v', '.wmv', '.flv', '.ts', '.m2ts', '.mts'}
-    
-    try:
-        # Get list of demuxers from FFmpeg
-        result = subprocess.run(
-            ['ffmpeg', '-demuxers', '-hide_banner'],
-            capture_output=True, text=True, timeout=10
-        )
-        
-        # Parse demuxer output for common video container formats
-        # Focus on containers that hold video (not raw formats or image sequences)
-        container_extensions = set()
-        
-        # Map demuxer names to extensions (common video containers)
-        # Note: Only include formats FFmpeg can actually decode, not just demux
-        demuxer_to_ext = {
-            'mov,mp4,m4a,3gp,3g2,mj2': ['.mov', '.mp4', '.m4v', '.3gp', '.3g2'],
-            'avi': ['.avi'],
-            'matroska,webm': ['.mkv', '.webm'],
-            'mxf': ['.mxf'],
-            'asf': ['.wmv', '.asf'],
-            'flv': ['.flv'],
-            'mpegts': ['.ts', '.m2ts', '.mts'],
-            'mpegps': ['.mpg', '.mpeg', '.vob'],
-            'ogg': ['.ogv'],
-            'rm': ['.rm', '.rmvb'],
-            'wtv': ['.wtv'],
-            'dv': ['.dv'],
-            'mj2': ['.mj2'],
-            'bink': ['.bik', '.bk2'], # Bink video
-            # Excluded: r3d (RED), braw (Blackmagic) - require proprietary SDKs
-        }
-        
-        # Check which demuxers are available
-        for demuxer, exts in demuxer_to_ext.items():
-            if demuxer in result.stdout:
-                container_extensions.update(exts)
-        
-        if container_extensions:
-            _video_extensions = container_extensions
-            return _video_extensions
-        
-    except Exception as e:
-        print(f"  ⚠️  Could not query FFmpeg demuxers: {e}")
-    
-    _video_extensions = fallback
-    return _video_extensions
+    """Return set of supported video file extensions."""
+    return VIDEO_EXTENSIONS
 
 
 def get_config(key, default=None):
