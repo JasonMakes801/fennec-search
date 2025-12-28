@@ -39,13 +39,13 @@
   height: 4px;
 }
 
-/* Face box overlay */
+/* Face box overlay - teal to match face filter lozenge */
 .face-box {
-  @apply absolute border-2 border-green-500/60 rounded cursor-pointer transition-all;
+  @apply absolute border-2 border-teal-500/60 rounded cursor-pointer transition-all;
 }
 
 .face-box:hover {
-  @apply border-green-400 bg-green-500/20;
+  @apply border-teal-400 bg-teal-500/20;
 }
 
 /* Result card */

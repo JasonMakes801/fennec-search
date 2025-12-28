@@ -55,6 +55,7 @@ def clean_db(db_connection):
     def _clean():
         cur = db_connection.cursor()
         cur.execute("DELETE FROM faces")
+        cur.execute("DELETE FROM embeddings")
         cur.execute("DELETE FROM scenes")
         cur.execute("DELETE FROM enrichment_queue")
         cur.execute("DELETE FROM files")

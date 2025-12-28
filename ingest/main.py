@@ -7,8 +7,9 @@ Uses simple polling (not watchdog) for NFS/SMB compatibility.
 import os
 import time
 from db import get_connection
-from scanner import run_scan, get_stats, get_indexer_state, get_poll_interval, recover_stuck_jobs
+from scanner import run_scan, get_stats, get_indexer_state, get_poll_interval, recover_stuck_jobs, set_config, get_config
 from enrichment import run_enrichment
+from face_cluster import cluster_faces
 
 
 def format_duration(seconds):
@@ -49,6 +50,19 @@ def print_stats():
         print(f"   ⚠️  Failed jobs: {stats['queue_failed']}")
 
 
+def sync_watch_folders_from_env():
+    """Sync WATCH_FOLDERS env var to config table on startup."""
+    env_folders = os.environ.get('WATCH_FOLDERS', '')
+    if not env_folders.strip():
+        return
+    
+    # Parse comma-separated paths
+    folders = [f.strip() for f in env_folders.split(',') if f.strip()]
+    if folders:
+        set_config('watch_folders', folders)
+        print(f"✓ Watch folders from env: {', '.join(folders)}")
+
+
 def main():
     print("🦊 Fennec Ingest Service starting...")
     
@@ -60,6 +74,9 @@ def main():
     print(f"✓ Database connected. Files in index: {count}")
     cur.close()
     conn.close()
+    
+    # Sync watch folders from environment variable
+    sync_watch_folders_from_env()
     
     # Recover any stuck jobs from previous runs
     recovered = recover_stuck_jobs(timeout_minutes=30)
@@ -100,6 +117,10 @@ def main():
             print(f"\n⚙️  Processing {pending} pending files...")
             processed = run_enrichment()
             print(f"✓ Enrichment complete. Processed {processed} files.")
+            
+            # Re-cluster all faces after new files processed
+            print(f"\n🧩 Clustering faces...")
+            cluster_faces()
         
         # Print stats
         print_stats()

@@ -48,15 +48,47 @@
         </div>
 
         <!-- Dialog -->
-        <div class="control-group w-48">
-          <label class="control-label">Dialog</label>
+        <div class="control-group min-w-[200px]">
+          <label class="control-label">
+            <span>Dialog</span>
+            <span v-if="dialogSearchMode === 'semantic'" class="flex items-center gap-1">
+              <span class="text-gray-500 text-xs normal-case">min</span>
+              <input 
+                type="text" 
+                v-model="thresholds.dialog"
+                class="threshold-input"
+                title="Minimum semantic similarity (0-1)"
+              />
+            </span>
+          </label>
           <input 
             type="text"
             v-model="filters.dialog"
-            placeholder="spoken words..."
+            :placeholder="dialogSearchMode === 'semantic' ? 'find similar meaning...' : 'exact words...'"
             class="input-field"
             @input="debouncedSearch"
           />
+          <!-- Search mode toggle -->
+          <div class="flex items-center gap-2 mt-1.5">
+            <span 
+              class="text-xs transition"
+              :class="dialogSearchMode === 'semantic' ? 'text-orange-400' : 'text-gray-500'"
+            >Semantic</span>
+            <button 
+              @click="dialogSearchMode = dialogSearchMode === 'semantic' ? 'keyword' : 'semantic'; if (filters.dialog) debouncedSearch()"
+              class="w-8 h-4 bg-[#333] rounded-full flex items-center px-0.5"
+              title="Toggle between semantic (finds synonyms) and keyword (exact match) search"
+            >
+              <span 
+                class="w-3 h-3 bg-white rounded-full transition-all duration-200"
+                :class="dialogSearchMode === 'semantic' ? 'ml-0' : 'ml-auto'"
+              ></span>
+            </button>
+            <span 
+              class="text-xs transition"
+              :class="dialogSearchMode === 'keyword' ? 'text-orange-400' : 'text-gray-500'"
+            >Keyword</span>
+          </div>
         </div>
 
         <!-- Metadata Filter -->
@@ -206,11 +238,18 @@
           <div class="flex items-center gap-2 min-h-[36px] bg-[#262626] rounded px-2">
             <span v-if="!faceFilter" class="text-gray-600 text-xs">Click face in results</span>
             <template v-else>
-              <canvas ref="faceCanvas" width="28" height="28" class="rounded border border-green-500"></canvas>
+              <canvas ref="faceCanvas" width="28" height="28" class="rounded border border-teal-500"></canvas>
               <span class="text-xs text-gray-300">Scene {{ faceFilter.sceneIndex }}</span>
               <button @click="clearFaceFilter" class="text-red-400 hover:text-red-300 text-xs ml-auto">x</button>
             </template>
           </div>
+          <!-- Browse all faces button -->
+          <button 
+            @click="showFaceBrowser = true"
+            class="mt-1.5 w-full px-2 py-1 bg-[#262626] hover:bg-[#333] text-gray-400 hover:text-white text-xs rounded transition"
+          >
+            Browse All Faces
+          </button>
         </div>
 
         <!-- Visual Match -->
@@ -229,7 +268,7 @@
           <div class="flex items-center gap-2 min-h-[36px] bg-[#262626] rounded px-2">
             <span v-if="!visualMatch" class="text-gray-600 text-xs">Click thumbnail to match</span>
             <template v-else>
-              <img :src="getSceneThumbnail(visualMatch.sceneIndex)" class="h-7 rounded border border-orange-500" />
+              <img :src="getSceneThumbnail(visualMatch.sceneIndex)" class="h-7 rounded border border-violet-500" />
               <span class="text-xs text-gray-300">Scene {{ visualMatch.sceneIndex }}</span>
               <button @click="clearVisualMatch" class="text-red-400 hover:text-red-300 text-xs ml-auto">x</button>
             </template>
@@ -313,20 +352,26 @@
             style="aspect-ratio: 864/360;"
             @load="e => renderFaceBoxes(idx, scene, e.target)"
           />
-          <!-- Similarity badges -->
+          <!-- Similarity badges (colors match filter lozenges) -->
           <span 
             v-if="scene.similarity" 
-            class="similarity-badge"
-            :class="getSimilarityClass(scene.similarity)"
+            class="similarity-badge bg-amber-700/80"
           >
             {{ Math.round(scene.similarity * 100) }}%
           </span>
           <span 
             v-if="scene.face_similarity && !scene.combined_similarity" 
-            class="similarity-badge bg-green-800/70"
+            class="similarity-badge bg-teal-700/80"
             style="top: 24px;"
           >
-            {{ Math.round(scene.face_similarity * 100) }}% face
+            {{ Math.round(scene.face_similarity * 100) }}%
+          </span>
+          <span 
+            v-if="scene.transcript_similarity" 
+            class="similarity-badge bg-slate-600/80"
+            :style="{ top: (scene.similarity ? 24 : 4) + (scene.face_similarity ? 20 : 0) + 'px' }"
+          >
+            {{ Math.round(scene.transcript_similarity * 100) }}%
           </span>
           <!-- Match button -->
           <button 
@@ -401,16 +446,16 @@
         <div class="p-4">
           <!-- Custom Video Player -->
           <div class="relative rounded overflow-hidden bg-black">
-            <!-- First frame overlay (frame-accurate) - shown only until first play -->
+            <!-- Poster frame overlay - shown until first play -->
             <div 
-              v-if="showFirstFrame"
+              v-if="showPosterOverlay"
               class="absolute inset-0 z-10 cursor-pointer"
               @click="startPlayback"
             >
               <img 
-                :src="getFirstFrameUrl(selectedScene.scene_index)"
+                :src="getSceneThumbnail(selectedScene.scene_index)"
                 class="w-full h-full object-contain"
-                alt="First frame"
+                alt="Scene poster"
               />
               <!-- Big play button -->
               <div class="absolute inset-0 flex items-center justify-center">
@@ -542,6 +587,23 @@
             </div>
           </div>
           
+          <!-- Vectors info -->
+          <div v-if="selectedScene.vectors?.length" class="mt-3 p-3 bg-[#0d0d0d] rounded">
+            <span class="metadata-key">Vectors</span>
+            <div class="flex flex-wrap gap-2 mt-1">
+              <span 
+                v-for="(vec, idx) in selectedScene.vectors" 
+                :key="idx"
+                class="inline-flex items-center gap-1 px-2 py-0.5 bg-[#1a1a1a] rounded text-xs"
+                :title="`${vec.model} ${vec.version} (${vec.dimension}d)`"
+              >
+                <span class="text-green-400">✓</span>
+                <span class="text-gray-300">{{ vec.model }}</span>
+                <span class="text-gray-500">{{ vec.dimension }}d</span>
+              </span>
+            </div>
+          </div>
+          
           <div v-if="selectedScene.transcript" class="mt-3 p-3 bg-[#0d0d0d] rounded">
             <span class="metadata-key">Dialog</span>
             <p class="text-gray-300 text-sm mt-1 italic">"{{ selectedScene.transcript }}"</p>
@@ -649,7 +711,7 @@
               :ref="el => faceSelectRefs[idx] = el"
               width="80" 
               height="80"
-              class="rounded border-2 border-gray-600 hover:border-green-500"
+              class="rounded border-2 border-gray-600 hover:border-teal-500"
             ></canvas>
             <div class="text-xs text-gray-400 mt-1">Face {{ idx + 1 }}</div>
           </div>
@@ -659,12 +721,20 @@
         </button>
       </div>
     </div>
+
+    <!-- Face Browser Modal -->
+    <FaceBrowserModal 
+      :isOpen="showFaceBrowser"
+      @close="showFaceBrowser = false"
+      @select="onFaceBrowserSelect"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
 import { api } from '../services/api'
+import FaceBrowserModal from '../components/FaceBrowserModal.vue'
 
 // Constants
 const PAGE_SIZE = 40
@@ -686,7 +756,7 @@ const progressBar = ref(null)
 
 // Video player state
 const isPlaying = ref(false)
-const showFirstFrame = ref(true)  // Show poster until first play
+const showPosterOverlay = ref(true)  // Show poster until first play
 const sceneProgress = ref(0)
 const currentSceneTime = ref(0)
 const isScrubbing = ref(false)
@@ -702,14 +772,19 @@ const filters = reactive({
 const defaultThresholds = reactive({
   visual: 0.10,
   face: 0.25,
-  visualMatch: 0.20
+  visualMatch: 0.20,
+  dialog: 0.35
 })
 
 const thresholds = reactive({
   visual: '0.10',
   face: '0.25',
-  visualMatch: '0.20'
+  visualMatch: '0.20',
+  dialog: '0.35'
 })
+
+// Dialog search mode: 'semantic' (embeddings) or 'keyword' (exact match)
+const dialogSearchMode = ref('semantic')
 
 const faceFilter = ref(null)
 const visualMatch = ref(null)
@@ -728,6 +803,7 @@ const newMeta = reactive({
 const selectedScene = ref(null)
 const faceSelectModal = ref(null)
 const showFileDetails = ref(false)
+const showFaceBrowser = ref(false)
 
 // Color swatches
 const colorSwatches = [
@@ -980,11 +1056,6 @@ function getSceneThumbnail(sceneIndex) {
   return `/api/thumbnail/${sceneId}`
 }
 
-function getFirstFrameUrl(sceneIndex) {
-  const sceneId = `scene_${String(sceneIndex).padStart(4, '0')}`
-  return `/api/first-frame/${sceneId}`
-}
-
 function getVideoUrl(fileId) {
   return `/api/video/${fileId}`
 }
@@ -1033,8 +1104,8 @@ function onVideoTimeUpdate() {
 }
 
 function startPlayback() {
-  // Called when clicking the first-frame poster overlay
-  showFirstFrame.value = false
+  // Called when clicking the poster overlay
+  showPosterOverlay.value = false
   if (modalVideo.value) {
     modalVideo.value.play()
   }
@@ -1206,11 +1277,22 @@ async function search() {
       params.visual_threshold = parseFloat(thresholds.visual) || 0.10
     }
     if (filters.dialog) {
-      params.transcript = filters.dialog
+      // Use semantic search (embeddings) or keyword search (exact match)
+      if (dialogSearchMode.value === 'semantic') {
+        params.transcript_semantic = filters.dialog
+        params.transcript_threshold = parseFloat(thresholds.dialog) || 0.35
+      } else {
+        params.transcript = filters.dialog
+      }
     }
     if (faceFilter.value) {
-      params.face_scene = faceFilter.value.sceneIndex
-      params.face_index = faceFilter.value.faceIndex
+      // Support both face_id (from browser) and face_scene+face_index (from clicking results)
+      if (faceFilter.value.faceId) {
+        params.face_id = faceFilter.value.faceId
+      } else {
+        params.face_scene = faceFilter.value.sceneIndex
+        params.face_index = faceFilter.value.faceIndex
+      }
       params.face_threshold = parseFloat(thresholds.face) || 0.25
     }
     if (visualMatch.value) {
@@ -1267,6 +1349,8 @@ function resetFilters() {
   thresholds.visual = String(defaultThresholds.visual)
   thresholds.face = String(defaultThresholds.face)
   thresholds.visualMatch = String(defaultThresholds.visualMatch)
+  thresholds.dialog = String(defaultThresholds.dialog)
+  dialogSearchMode.value = 'semantic'
   faceFilter.value = null
   visualMatch.value = null
   metadataFilters.value = []
@@ -1359,6 +1443,35 @@ function selectFaceFromModal(sceneIndex, faceIndex, bbox) {
   selectFace(sceneIndex, faceIndex, typeof bbox === 'string' ? JSON.parse(bbox) : bbox)
 }
 
+function onFaceBrowserSelect(face) {
+  // Face browser returns a face object with scene_index and bbox
+  // We need to find the face index within the scene
+  // For now, use face.id as a unique identifier
+  const bbox = face.bbox
+  const sceneIndex = face.scene_index
+  
+  // Set filter with face id instead of face index (more reliable for browse)
+  faceFilter.value = { 
+    sceneIndex, 
+    faceIndex: 0,  // Will be looked up by face_id on server
+    faceId: face.id,  // Use face id for exact match
+    bbox 
+  }
+  addFilter('face')
+  
+  // Draw face in filter display
+  nextTick(() => {
+    if (faceCanvas.value) {
+      const img = new Image()
+      img.crossOrigin = 'anonymous'
+      img.onload = () => drawFaceCrop(faceCanvas.value, img, bbox, 28)
+      img.src = api.thumbnailUrl(face.scene_id)
+    }
+  })
+  
+  search()
+}
+
 function clearFaceFilter() {
   faceFilter.value = null
   filterOrder.value = filterOrder.value.filter(t => t !== 'face')
@@ -1392,10 +1505,23 @@ function clearVisualMatch() {
 }
 
 // Scene modal
-function openScene(scene) {
+async function openScene(scene) {
+  // Set initial scene data from search results
   selectedScene.value = scene
-  showFirstFrame.value = true  // Reset poster state for new scene
+  showPosterOverlay.value = true  // Reset poster state for new scene
   showFileDetails.value = false  // Collapse file details for new scene
+  
+  // Fetch full scene details (includes vectors)
+  try {
+    const fullScene = await api.getScene(scene.scene_index)
+    // Merge vectors into selected scene
+    if (fullScene.vectors) {
+      selectedScene.value = { ...selectedScene.value, vectors: fullScene.vectors }
+    }
+  } catch (err) {
+    console.error('Failed to fetch scene vectors:', err)
+  }
+  
   nextTick(() => {
     if (scene.faces?.length && modalVideo.value) {
       const img = new Image()
@@ -1441,20 +1567,23 @@ function handleKeydown(e) {
 
 async function loadThresholds() {
   try {
-    const [visual, visualMatch, face] = await Promise.all([
+    const [visual, visualMatch, face, dialog] = await Promise.all([
       api.getConfig('search_threshold_visual'),
       api.getConfig('search_threshold_visual_match'),
-      api.getConfig('search_threshold_face')
+      api.getConfig('search_threshold_face'),
+      api.getConfig('search_threshold_transcript')
     ])
     
     defaultThresholds.visual = visual.value ?? 0.10
     defaultThresholds.visualMatch = visualMatch.value ?? 0.20
     defaultThresholds.face = face.value ?? 0.25
+    defaultThresholds.dialog = dialog.value ?? 0.35
     
     // Set current thresholds to defaults on load
     thresholds.visual = String(defaultThresholds.visual)
     thresholds.visualMatch = String(defaultThresholds.visualMatch)
     thresholds.face = String(defaultThresholds.face)
+    thresholds.dialog = String(defaultThresholds.dialog)
   } catch (err) {
     console.error('Failed to load threshold config:', err)
   }

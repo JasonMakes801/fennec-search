@@ -25,8 +25,11 @@ export const api = {
     if (params.visual) query.set('visual', params.visual)
     if (params.visual_threshold) query.set('visual_threshold', params.visual_threshold)
     if (params.transcript) query.set('transcript', params.transcript)
+    if (params.transcript_semantic) query.set('transcript_semantic', params.transcript_semantic)
+    if (params.transcript_threshold) query.set('transcript_threshold', params.transcript_threshold)
     if (params.face_scene !== undefined) query.set('face_scene', params.face_scene)
     if (params.face_index !== undefined) query.set('face_index', params.face_index)
+    if (params.face_id !== undefined) query.set('face_id', params.face_id)
     if (params.face_threshold) query.set('face_threshold', params.face_threshold)
     if (params.visual_match_scene !== undefined) query.set('visual_match_scene', params.visual_match_scene)
     if (params.visual_match_threshold) query.set('visual_match_threshold', params.visual_match_threshold)
@@ -45,6 +48,16 @@ export const api = {
     if (params.codec) query.set('codec', params.codec)
     
     return fetchJSON(`/search?${query}`)
+  },
+  
+  // Generic GET for any endpoint
+  async get(endpoint) {
+    return fetchJSON(endpoint)
+  },
+  
+  // Thumbnail URL for a scene (by scene_id)
+  thumbnailUrl(sceneId) {
+    return `${API_BASE}/thumbnail/${sceneId}`
   },
   
   // Get scenes (paginated browse)
@@ -71,6 +84,11 @@ export const api = {
     return fetchJSON('/stats')
   },
   
+  // Vector stats (coverage by model)
+  async getVectorStats() {
+    return fetchJSON('/stats/vectors')
+  },
+
   // Faces
   async getFaces(params = {}) {
     const query = new URLSearchParams()

@@ -149,32 +149,23 @@ def detect_scenes(video_path, file_id):
             start_tc = float(scene[0])
             end_tc = float(scene[1])
         
-        # Extract FIRST frame (for player initial display - frame accurate)
-        first_filename = f"{file_id}_{i:04d}_first{poster_ext}"
-        first_path = os.path.join(POSTER_DIR, first_filename)
-        
-        if extract_frame(video_path, start_tc, first_path, poster_width, poster_quality):
-            first_db_path = first_path
-        else:
-            first_db_path = None
-        
-        # Extract MID frame (for thumbnails + CLIP embedding)
+        # Extract CENTER frame (for thumbnails, CLIP embedding, and player initial display)
         mid_tc = (start_tc + end_tc - frame_duration) / 2
         mid_filename = f"{file_id}_{i:04d}{poster_ext}"
         mid_path = os.path.join(POSTER_DIR, mid_filename)
         
         if extract_frame(video_path, mid_tc, mid_path, poster_width, poster_quality):
-            mid_db_path = mid_path
+            poster_db_path = mid_path
         else:
-            mid_db_path = None
+            poster_db_path = None
         
         # Insert scene into database
         cur.execute(
             """
-            INSERT INTO scenes (file_id, scene_index, start_tc, end_tc, poster_first_path, poster_frame_path)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO scenes (file_id, scene_index, start_tc, end_tc, poster_frame_path)
+            VALUES (%s, %s, %s, %s, %s)
             """,
-            (file_id, i, start_tc, end_tc, first_db_path, mid_db_path)
+            (file_id, i, start_tc, end_tc, poster_db_path)
         )
     
     conn.commit()

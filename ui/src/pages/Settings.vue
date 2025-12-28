@@ -33,35 +33,19 @@
         <div 
           v-for="(folder, idx) in watchFolders" 
           :key="idx"
-          class="flex items-center justify-between bg-[#262626] rounded px-3 py-2"
+          class="flex items-center bg-[#262626] rounded px-3 py-2"
         >
           <span class="font-mono text-sm">{{ folder }}</span>
-          <button 
-            @click="removeWatchFolder(idx)"
-            class="text-red-400 hover:text-red-300 text-sm"
-          >
-            Remove
-          </button>
         </div>
         <div v-if="watchFolders.length === 0" class="text-gray-500 text-sm py-2">
           No watch folders configured
         </div>
       </div>
       
-      <div class="flex gap-2">
-        <input 
-          v-model="newFolder"
-          type="text"
-          placeholder="/path/to/videos"
-          class="flex-1 bg-[#262626] text-white px-3 py-2 rounded text-sm font-mono focus:outline-none focus:ring-1 focus:ring-orange-500"
-        />
-        <button 
-          @click="addWatchFolder"
-          class="px-4 py-2 bg-orange-500 hover:bg-orange-600 rounded text-sm font-medium transition"
-        >
-          Add
-        </button>
-      </div>
+      <p class="text-xs text-gray-500">
+        Watch folders are configured via the <code class="bg-[#262626] px-1 rounded">WATCH_FOLDERS</code> 
+        environment variable in <code class="bg-[#262626] px-1 rounded">docker-compose.yml</code>.
+      </p>
     </section>
 
     <!-- Model Settings -->
@@ -237,7 +221,6 @@ import { api } from '../services/api'
 
 const indexerState = ref('unknown')
 const watchFolders = ref([])
-const newFolder = ref('')
 
 const models = reactive({
   clip: true,
@@ -296,28 +279,6 @@ async function toggleIndexer() {
     indexerState.value = newState
   } catch (err) {
     console.error('Failed to toggle indexer:', err)
-  }
-}
-
-async function addWatchFolder() {
-  if (!newFolder.value.trim()) return
-  const updated = [...watchFolders.value, newFolder.value.trim()]
-  try {
-    await api.setConfig('watch_folders', updated)
-    watchFolders.value = updated
-    newFolder.value = ''
-  } catch (err) {
-    console.error('Failed to add watch folder:', err)
-  }
-}
-
-async function removeWatchFolder(idx) {
-  const updated = watchFolders.value.filter((_, i) => i !== idx)
-  try {
-    await api.setConfig('watch_folders', updated)
-    watchFolders.value = updated
-  } catch (err) {
-    console.error('Failed to remove watch folder:', err)
   }
 }
 

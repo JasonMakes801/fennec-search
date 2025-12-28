@@ -127,16 +127,37 @@ class TestCLIPEmbedding:
         
         assert num_embedded >= 1
         
-        # Verify embeddings in database
+        # Verify embeddings in database (now in embeddings table)
         cur = clean_db.cursor()
         cur.execute("""
-            SELECT COUNT(*) FROM scenes 
-            WHERE file_id = %s AND clip_embedding IS NOT NULL
+            SELECT COUNT(*) FROM embeddings e
+            JOIN scenes s ON e.scene_id = s.id
+            WHERE s.file_id = %s AND e.model_name = 'clip'
         """, (file_id,))
         count = cur.fetchone()[0]
         cur.close()
         
         assert count == num_embedded
+    
+    def test_embed_stores_model_info(self, clean_db, test_video_normal):
+        """Should store model name, version, and dimension."""
+        file_id, _, _ = add_file_to_db(test_video_normal)
+        detect_scenes(test_video_normal, file_id)
+        embed_scenes_for_file(file_id)
+        
+        cur = clean_db.cursor()
+        cur.execute("""
+            SELECT model_name, model_version, dimension FROM embeddings e
+            JOIN scenes s ON e.scene_id = s.id
+            WHERE s.file_id = %s LIMIT 1
+        """, (file_id,))
+        row = cur.fetchone()
+        cur.close()
+        
+        assert row is not None
+        assert row[0] == 'clip'
+        assert row[1] == 'ViT-B-32-laion2b_s34b_b79k'
+        assert row[2] == 512
 
 
 class TestFaceDetection:

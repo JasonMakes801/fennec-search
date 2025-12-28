@@ -472,7 +472,7 @@ def run_scan():
     
     if not watch_folders:
         print("  No watch folders configured")
-        return 0, 0, 0
+        return 0, 0, 0, 0
     
     total_found = 0
     new_added = 0

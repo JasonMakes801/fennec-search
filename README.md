@@ -38,23 +38,29 @@ Find any moment in your media library. Fennec enriches your videos with AI model
 ```bash
 git clone https://github.com/JasonMakes801/fennec-search.git
 cd fennec-search
-cp .env.example .env
-docker compose up -d
 ```
 
 ### 2. Configure Watch Folders
 
-Open the UI at **http://localhost:8080** and go to **Settings** to add folders containing your videos.
+Edit `docker-compose.yml` and set the `WATCH_FOLDERS` environment variable for the ingest service:
 
-Or via command line:
-```bash
-docker exec fennec-db psql -U fennec -c \
-  "UPDATE config SET value = '[\"/path/to/your/videos\"]' WHERE key = 'watch_folders';"
+```yaml
+ingest:
+  environment:
+    WATCH_FOLDERS: /Users/yourname/Videos,/Volumes/NAS/Media
 ```
 
-### 3. Start Searching
+Multiple folders can be comma-separated. These paths must be accessible inside the container via the volume mounts (see the media volumes section in the compose file).
 
-The ingest service will automatically scan and enrich your videos. Search results appear as files are processed.
+### 3. Start Services
+
+```bash
+docker compose up -d
+```
+
+### 4. Start Searching
+
+Open **http://localhost:8080**. The ingest service will automatically scan and enrich your videos. Search results appear as files are processed.
 
 ---
 
@@ -193,7 +199,7 @@ docker exec fennec-db psql -U fennec -c \
 ### Search not returning results
 
 1. Wait for enrichment to complete (check queue status in Settings)
-2. Ensure scenes have embeddings: `docker exec fennec-db psql -U fennec -c "SELECT COUNT(*) FROM scenes WHERE clip_embedding IS NOT NULL;"`
+2. Ensure scenes have embeddings: `docker exec fennec-db psql -U fennec -c "SELECT COUNT(*) FROM embeddings WHERE model_name = 'clip';"`
 
 ### Out of memory during enrichment
 

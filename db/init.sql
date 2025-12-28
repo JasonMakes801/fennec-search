@@ -43,19 +43,32 @@ CREATE TABLE scenes (
     scene_index INTEGER,
     start_tc FLOAT,
     end_tc FLOAT,
-    poster_first_path TEXT,      -- First frame (for player initial display)
-    poster_frame_path TEXT,      -- Mid frame (for thumbnails + CLIP embedding)
-    clip_embedding vector(512),  -- CLIP ViT-B-32
-    transcript TEXT,
-    transcript_embedding vector(512)
+    poster_frame_path TEXT,      -- Center frame (for thumbnails + player initial display)
+    transcript TEXT              -- Whisper transcript (stored here for full-text search)
 );
 
--- Faces
+-- Embeddings (model-versioned vectors for search)
+-- Supports multiple models with different dimensions
+CREATE TABLE embeddings (
+    id SERIAL PRIMARY KEY,
+    scene_id INTEGER REFERENCES scenes(id) ON DELETE CASCADE,
+    model_name TEXT NOT NULL,       -- e.g., 'clip', 'whisper', 'clap'
+    model_version TEXT NOT NULL,    -- e.g., 'ViT-B-32-laion2b_s34b_b79k', 'base'
+    dimension INTEGER NOT NULL,     -- Vector dimension (512, 768, 1024, etc.)
+    embedding vector,               -- Variable dimension vector
+    created_at TIMESTAMP DEFAULT NOW(),
+    
+    -- One embedding per scene per model (new version overwrites old)
+    UNIQUE (scene_id, model_name)
+);
+
+-- Faces (ArcFace embeddings with bounding boxes)
 CREATE TABLE faces (
     id SERIAL PRIMARY KEY,
     scene_id INTEGER REFERENCES scenes(id) ON DELETE CASCADE,
-    embedding vector(512),  -- ArcFace
-    cluster_id INTEGER,
+    embedding vector(512),  -- ArcFace (fixed 512-dim)
+    cluster_id INTEGER,     -- HDBSCAN cluster assignment (-1 = noise/unclustered)
+    cluster_order FLOAT,    -- Distance to cluster centroid (for sorting within cluster)
     bbox_x FLOAT,
     bbox_y FLOAT,
     bbox_w FLOAT,
@@ -71,7 +84,11 @@ CREATE TABLE enrichment_queue (
     started_at TIMESTAMP,
     completed_at TIMESTAMP,
     error TEXT,
-    retry_count INTEGER DEFAULT 0
+    retry_count INTEGER DEFAULT 0,
+    -- Stage progress tracking
+    current_stage TEXT,             -- 'scene_detection', 'clip', 'whisper', 'arcface'
+    current_stage_num INTEGER,      -- 1, 2, 3, 4
+    total_stages INTEGER            -- Total stages for this file (based on enabled models)
 );
 
 -- Config (watch folders, settings)
@@ -94,10 +111,19 @@ INSERT INTO config (key, value) VALUES
     -- Search threshold defaults (cosine similarity, 0-1 range)
     ('search_threshold_visual', '0.10'),       -- CLIP text-to-image search
     ('search_threshold_visual_match', '0.20'), -- Scene-to-scene visual similarity
-    ('search_threshold_face', '0.25');         -- ArcFace similarity
+    ('search_threshold_face', '0.25'),         -- ArcFace similarity
+    -- Model registry (versions for partial enrichment)
+    ('model_versions', '{
+        "clip": {"version": "ViT-B-32-laion2b_s34b_b79k", "dimension": 512},
+        "whisper": {"version": "base", "dimension": 512}
+    }');
 
--- Create indexes for vector similarity search
-CREATE INDEX ON scenes USING ivfflat (clip_embedding vector_cosine_ops) WITH (lists = 100);
+-- Index for embeddings by model (partial indexes for each model type)
+-- Note: IVFFlat indexes should be created after data exists for optimal list sizing
+CREATE INDEX idx_embeddings_scene ON embeddings (scene_id);
+CREATE INDEX idx_embeddings_model ON embeddings (model_name);
+
+-- Index for face similarity search
 CREATE INDEX ON faces USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- Index for queue processing

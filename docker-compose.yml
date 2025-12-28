@@ -14,9 +14,9 @@
 # ==============================================================================
 
 x-media-volumes: &media-volumes
-  # macOS defaults - edit as needed:
-  - /Users:/users:ro
-  - /Volumes:/volumes:ro
+  # macOS defaults - same path inside container for user convenience:
+  - /Users:/Users:ro
+  - /Volumes:/Volumes:ro
   # Linux examples (uncomment as needed):
   # - /home:/home:ro
   # - /mnt:/mnt:ro
@@ -56,14 +56,17 @@ services:
       DB_USER: fennec
       DB_PASSWORD: fennec
       PYTHONUNBUFFERED: 1
+      # Comma-separated list of folders to scan for video files
+      # These paths must exist inside the container (see volume mounts below)
+      WATCH_FOLDERS: /Users/jason/Dropbox/code/IntelligentVideoSearch/media
     volumes:
       # App volumes
       - ./ingest:/app
       - fennec_posters:/app/posters
       - fennec_models:/root/.cache
-      # Media volumes (from x-media-volumes above)
-      - /Users:/users:ro
-      - /Volumes:/volumes:ro
+      # Media volumes - same path inside container for user convenience
+      - /Users:/Users:ro
+      - /Volumes:/Volumes:ro
 
   server:
     build: ./server
@@ -83,9 +86,9 @@ services:
       # App volumes
       - ./server:/app
       - fennec_posters:/app/posters:ro
-      # Media volumes (keep in sync with ingest above!)
-      - /Users:/users:ro
-      - /Volumes:/volumes:ro
+      # Media volumes - same path inside container for user convenience
+      - /Users:/Users:ro
+      - /Volumes:/Volumes:ro
     ports:
       - "8000:8000"
 

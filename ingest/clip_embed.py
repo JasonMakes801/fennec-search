@@ -9,6 +9,11 @@ from PIL import Image
 from db import get_connection
 from progress import progress_counter, progress_done
 
+# Model info (for embeddings table)
+MODEL_NAME = 'clip'
+MODEL_VERSION = 'ViT-B-32-laion2b_s34b_b79k'
+MODEL_DIMENSION = 512
+
 # Global model (loaded once)
 _model = None
 _preprocess = None
@@ -74,20 +79,21 @@ def embed_text(text):
 def embed_scenes_for_file(file_id):
     """
     Generate CLIP embeddings for all scenes of a file.
-    Updates the clip_embedding column in scenes table.
+    Writes to embeddings table with model/version/dimension.
     Returns number of scenes embedded.
     """
     conn = get_connection()
     cur = conn.cursor()
     
-    # Get scenes with poster frames but no embedding yet
+    # Get scenes with poster frames that don't have CLIP embedding yet
     cur.execute("""
-        SELECT id, poster_frame_path 
-        FROM scenes 
-        WHERE file_id = %s 
-        AND poster_frame_path IS NOT NULL
-        AND clip_embedding IS NULL
-    """, (file_id,))
+        SELECT s.id, s.poster_frame_path 
+        FROM scenes s
+        LEFT JOIN embeddings e ON s.id = e.scene_id AND e.model_name = %s
+        WHERE s.file_id = %s 
+        AND s.poster_frame_path IS NOT NULL
+        AND e.id IS NULL
+    """, (MODEL_NAME, file_id))
     
     scenes = cur.fetchall()
     
@@ -103,9 +109,18 @@ def embed_scenes_for_file(file_id):
         try:
             embedding = embed_image(poster_path)
             embedding_list = embedding.tolist()
+            # UPSERT: insert or update if model already exists for this scene
             cur.execute(
-                "UPDATE scenes SET clip_embedding = %s WHERE id = %s",
-                (embedding_list, scene_id)
+                """
+                INSERT INTO embeddings (scene_id, model_name, model_version, dimension, embedding)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (scene_id, model_name) 
+                DO UPDATE SET model_version = EXCLUDED.model_version,
+                              dimension = EXCLUDED.dimension,
+                              embedding = EXCLUDED.embedding,
+                              created_at = NOW()
+                """,
+                (scene_id, MODEL_NAME, MODEL_VERSION, MODEL_DIMENSION, embedding_list)
             )
         except Exception as e:
             pass  # Skip failed embeddings silently
