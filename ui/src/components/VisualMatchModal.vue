@@ -1,18 +1,18 @@
 <template>
-  <div 
-    v-if="isOpen" 
+  <div
+    v-if="isOpen"
     class="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
     @click.self="close"
   >
     <div class="bg-[#171717] rounded-lg w-[90vw] max-w-6xl h-[85vh] flex flex-col">
-      <!-- Header with cluster jump tabs -->
+      <!-- Header -->
       <div class="flex items-center justify-between p-4 border-b border-gray-800">
         <div class="flex items-center gap-4">
-          <h2 class="text-lg font-semibold">Browse Faces</h2>
+          <h2 class="text-lg font-semibold">Browse Visual Groups</h2>
           <span class="text-gray-500 text-sm">
-            {{ isFiltered ? `${clusters.length} clusters` : `${totalFaces} faces in ${clusters.length} clusters` }}
+            {{ isFiltered ? `${clusters.length} clusters` : `${totalScenes} scenes in ${clusters.length} clusters` }}
           </span>
-          <span v-if="isFiltered" class="text-xs bg-orange-600/30 text-orange-300 px-2 py-0.5 rounded">
+          <span v-if="isFiltered" class="text-xs bg-violet-600/30 text-violet-300 px-2 py-0.5 rounded">
             Filtered to selection
           </span>
         </div>
@@ -22,7 +22,7 @@
           </svg>
         </button>
       </div>
-      
+
       <!-- Cluster jump tabs (scrollable) - only show when unfiltered -->
       <div v-if="!isFiltered" class="flex items-center gap-2 px-4 py-2 border-b border-gray-800 overflow-x-auto">
         <span class="text-gray-500 text-xs whitespace-nowrap">Jump to:</span>
@@ -31,8 +31,8 @@
           :key="cluster.id"
           @click="scrollToCluster(cluster.id)"
           class="px-2 py-1 text-xs rounded whitespace-nowrap transition"
-          :class="activeCluster === cluster.id 
-            ? 'bg-orange-600 text-white' 
+          :class="activeCluster === cluster.id
+            ? 'bg-violet-600 text-white'
             : 'bg-[#262626] text-gray-300 hover:bg-[#333]'"
         >
           Cluster {{ cluster.id + 1 }} ({{ cluster.count }})
@@ -41,15 +41,15 @@
           v-if="unclusteredCount > 0"
           @click="scrollToCluster(-1)"
           class="px-2 py-1 text-xs rounded whitespace-nowrap transition"
-          :class="activeCluster === -1 
-            ? 'bg-orange-600 text-white' 
+          :class="activeCluster === -1
+            ? 'bg-violet-600 text-white'
             : 'bg-[#262626] text-gray-300 hover:bg-[#333]'"
         >
           Unclustered ({{ unclusteredCount }})
         </button>
       </div>
-      
-      <!-- Face grid with cluster sections -->
+
+      <!-- Scene grid -->
       <div
         ref="scrollContainer"
         class="flex-1 overflow-y-auto p-4"
@@ -57,41 +57,39 @@
       >
         <!-- Loading state -->
         <div v-if="loading" class="flex items-center justify-center h-full">
-          <div class="animate-spin w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full"></div>
+          <div class="animate-spin w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full"></div>
         </div>
 
         <!-- Filtered view: grid of cluster representatives -->
         <template v-else-if="isFiltered">
           <div class="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-4">
             <div
-              v-for="cluster in clustersWithFaces"
+              v-for="cluster in clustersWithScenes"
               :key="cluster.id"
               class="flex flex-col items-center"
             >
-              <!-- Representative face -->
+              <!-- Representative scene -->
               <div
-                v-if="cluster.faces.length > 0"
+                v-if="cluster.scenes.length > 0"
                 class="relative cursor-pointer group"
-                @click="selectFace(cluster.faces[0])"
+                @click="selectScene(cluster.scenes[0])"
               >
-                <canvas
-                  :ref="el => setFaceCanvas(cluster.faces[0].id, el)"
-                  width="64"
-                  height="64"
-                  class="w-16 h-16 rounded border-2 transition"
-                  :class="selectedFaceId === cluster.faces[0].id
-                    ? 'border-teal-500'
-                    : 'border-gray-700 group-hover:border-teal-500'"
-                ></canvas>
+                <img
+                  :src="api.thumbnailUrl(cluster.scenes[0].id)"
+                  class="w-full aspect-video rounded border-2 transition object-cover"
+                  :class="selectedSceneId === cluster.scenes[0].id
+                    ? 'border-violet-500'
+                    : 'border-gray-700 group-hover:border-violet-500'"
+                />
               </div>
-              <!-- Cluster info and filter button -->
+              <!-- Cluster info and match button -->
               <span class="text-gray-500 text-xs mt-1">{{ cluster.count }} members</span>
               <button
-                v-if="cluster.id !== -1 && cluster.faces.length > 0"
+                v-if="cluster.id !== -1 && cluster.scenes.length > 0"
                 @click="selectClusterRepresentative(cluster)"
                 class="mt-1 px-2 py-0.5 text-xs bg-[#262626] text-gray-300 rounded hover:bg-[#333] transition"
               >
-                Filter
+                Match
               </button>
             </div>
           </div>
@@ -100,7 +98,7 @@
         <!-- Unfiltered view: full cluster sections -->
         <template v-else>
           <div
-            v-for="cluster in clustersWithFaces"
+            v-for="cluster in clustersWithScenes"
             :key="cluster.id"
             :ref="el => setClusterRef(cluster.id, el)"
             class="mb-8"
@@ -111,45 +109,43 @@
                 <h3 class="text-sm font-medium text-gray-300">
                   {{ cluster.id === -1 ? 'Unclustered' : `Cluster ${cluster.id + 1}` }}
                 </h3>
-                <span class="text-gray-500 text-xs">{{ cluster.faces.length }} faces</span>
+                <span class="text-gray-500 text-xs">{{ cluster.scenes.length }} scenes</span>
                 <button
-                  v-if="cluster.id !== -1 && cluster.faces.length > 0"
+                  v-if="cluster.id !== -1 && cluster.scenes.length > 0"
                   @click="selectClusterRepresentative(cluster)"
                   class="ml-auto px-3 py-1 text-xs bg-[#262626] text-gray-300 rounded hover:bg-[#333] transition"
                 >
-                  Filter by this person
+                  Match by this visual
                 </button>
               </div>
             </div>
 
-            <!-- Face thumbnails -->
-            <div class="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 lg:grid-cols-12 gap-2">
+            <!-- Scene thumbnails -->
+            <div class="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 lg:grid-cols-8 gap-2">
               <div
-                v-for="face in cluster.faces"
-                :key="face.id"
+                v-for="scene in cluster.scenes"
+                :key="scene.id"
                 class="relative cursor-pointer group"
-                @click="selectFace(face)"
+                @click="selectScene(scene)"
               >
-                <canvas
-                  :ref="el => setFaceCanvas(face.id, el)"
-                  width="64"
-                  height="64"
-                  class="w-full aspect-square rounded border-2 transition"
-                  :class="selectedFaceId === face.id
-                    ? 'border-teal-500'
-                    : 'border-gray-700 group-hover:border-teal-500'"
-                ></canvas>
+                <img
+                  :src="api.thumbnailUrl(scene.id)"
+                  class="w-full aspect-video rounded border-2 transition object-cover"
+                  :class="selectedSceneId === scene.id
+                    ? 'border-violet-500'
+                    : 'border-gray-700 group-hover:border-violet-500'"
+                />
                 <!-- Hover overlay -->
-                <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition flex items-center justify-center">
-                  <span class="text-xs text-white">Scene {{ face.scene_index }}</span>
+                <div class="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition flex items-center justify-center rounded">
+                  <span class="text-xs text-white">Scene {{ scene.scene_index }}</span>
                 </div>
               </div>
             </div>
           </div>
         </template>
       </div>
-      
-      <!-- Footer - just close button -->
+
+      <!-- Footer -->
       <div class="flex items-center justify-end p-4 border-t border-gray-800">
         <button @click="close" class="px-4 py-2 text-sm bg-[#262626] text-gray-300 rounded hover:bg-[#333]">
           Close
@@ -160,14 +156,14 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { api } from '../services/api'
 
 const props = defineProps({
   isOpen: Boolean,
   sceneIds: {
     type: Array,
-    default: null  // null = all faces, array = filter to these scene IDs
+    default: null  // null = all scenes, array = filter to these scene IDs
   }
 })
 
@@ -177,27 +173,16 @@ const emit = defineEmits(['close', 'select'])
 const loading = ref(false)
 const clusters = ref([])
 const unclusteredCount = ref(0)
-const faces = ref([])
+const scenes = ref([])
 const activeCluster = ref(null)
-const selectedFaceId = ref(null)
-const selectedFace = ref(null)
+const selectedSceneId = ref(null)
 const isFiltered = ref(false)
 
 // Refs
 const scrollContainer = ref(null)
 const clusterRefs = ref({})
-const faceCanvasRefs = ref({})
 
-// Image cache
-const imageCache = ref({})
-
-// Helper functions for refs
-function setFaceCanvas(faceId, el) {
-  if (el) {
-    faceCanvasRefs.value[faceId] = el
-  }
-}
-
+// Helper function for refs
 function setClusterRef(clusterId, el) {
   if (el) {
     clusterRefs.value[clusterId] = el
@@ -205,134 +190,72 @@ function setClusterRef(clusterId, el) {
 }
 
 // Computed
-const totalFaces = computed(() => faces.value.length)
+const totalScenes = computed(() => scenes.value.length)
 
-const clustersWithFaces = computed(() => {
+const clustersWithScenes = computed(() => {
   const grouped = {}
-  
+
   // Initialize clusters
   for (const cluster of clusters.value) {
     grouped[cluster.id] = {
       id: cluster.id,
       count: cluster.count,
-      faces: []
+      scenes: []
     }
   }
-  
-  // Add unclustered group (-1) - always add if we have any faces
+
+  // Add unclustered group (-1)
   grouped[-1] = {
     id: -1,
     count: unclusteredCount.value,
-    faces: []
+    scenes: []
   }
-  
-  // Assign faces to clusters
-  for (const face of faces.value) {
-    // null or -1 both go to unclustered
-    const clusterId = (face.cluster_id === null || face.cluster_id === -1) ? -1 : face.cluster_id
+
+  // Assign scenes to clusters
+  for (const scene of scenes.value) {
+    const clusterId = (scene.cluster_id === null || scene.cluster_id === -1) ? -1 : scene.cluster_id
     if (grouped[clusterId]) {
-      grouped[clusterId].faces.push(face)
+      grouped[clusterId].scenes.push(scene)
     } else {
-      // Unknown cluster, put in unclustered
-      grouped[-1].faces.push(face)
+      grouped[-1].scenes.push(scene)
     }
   }
-  
+
   // Sort: clusters by size desc, unclustered last
   const result = Object.values(grouped)
-    .filter(c => c.faces.length > 0)
+    .filter(c => c.scenes.length > 0)
     .sort((a, b) => {
       if (a.id === -1) return 1
       if (b.id === -1) return -1
       return b.count - a.count
     })
-  
+
   return result
 })
 
 // Methods
-async function loadFaces() {
+async function loadScenes() {
   loading.value = true
   try {
-    let url = '/faces/browse'
+    let url = '/scenes/browse'
     if (props.sceneIds && props.sceneIds.length > 0) {
       url += `?scene_ids=${props.sceneIds.join(',')}`
     }
     const data = await api.get(url)
     clusters.value = data.clusters || []
     unclusteredCount.value = data.unclustered_count || 0
-    faces.value = data.faces || []
+    scenes.value = data.scenes || []
     isFiltered.value = data.filtered || false
 
     // Set active cluster to first one
     if (clusters.value.length > 0) {
       activeCluster.value = clusters.value[0].id
     }
-
-    // Render face thumbnails after DOM updates
-    await nextTick()
-    // Small delay to ensure canvases are mounted
-    setTimeout(() => renderAllFaces(), 100)
   } catch (err) {
-    console.error('Failed to load faces:', err)
+    console.error('Failed to load scenes:', err)
   } finally {
     loading.value = false
   }
-}
-
-function renderAllFaces() {
-  for (const face of faces.value) {
-    renderFace(face)
-  }
-}
-
-async function renderFace(face) {
-  const canvas = faceCanvasRefs.value[face.id]
-  if (!canvas) return
-  
-  const ctx = canvas.getContext('2d')
-  
-  // Get or load image
-  let img = imageCache.value[face.poster_path]
-  if (!img) {
-    img = new Image()
-    img.crossOrigin = 'anonymous'
-    
-    try {
-      await new Promise((resolve, reject) => {
-        img.onload = resolve
-        img.onerror = (e) => reject(new Error(`Failed to load image for face ${face.id}`))
-        // Use scene_id to get thumbnail
-        img.src = api.thumbnailUrl(face.scene_id)
-      })
-      
-      imageCache.value[face.poster_path] = img
-    } catch (err) {
-      console.error(err)
-      // Draw placeholder
-      ctx.fillStyle = '#333'
-      ctx.fillRect(0, 0, 64, 64)
-      ctx.fillStyle = '#666'
-      ctx.font = '10px sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillText('Error', 32, 36)
-      return
-    }
-  }
-  
-  // Calculate crop region
-  const [bx, by, bw, bh] = face.bbox
-  const padding = 0.3 // 30% padding around face
-  const px = bw * padding
-  const py = bh * padding
-  
-  const sx = Math.max(0, bx - px)
-  const sy = Math.max(0, by - py)
-  const sw = Math.min(img.width - sx, bw + px * 2)
-  const sh = Math.min(img.height - sy, bh + py * 2)
-  
-  // Draw cropped face
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, 64, 64)
 }
 
 function scrollToCluster(clusterId) {
@@ -344,17 +267,14 @@ function scrollToCluster(clusterId) {
 }
 
 function onScroll() {
-  // Update active cluster based on scroll position
   if (!scrollContainer.value) return
-  
-  const scrollTop = scrollContainer.value.scrollTop
+
   const containerRect = scrollContainer.value.getBoundingClientRect()
-  
-  for (const cluster of clustersWithFaces.value) {
+
+  for (const cluster of clustersWithScenes.value) {
     const el = clusterRefs.value[cluster.id]
     if (el) {
       const rect = el.getBoundingClientRect()
-      // Check if cluster header is near top of container
       if (rect.top <= containerRect.top + 100 && rect.bottom > containerRect.top) {
         activeCluster.value = cluster.id
         break
@@ -363,32 +283,26 @@ function onScroll() {
   }
 }
 
-function selectFace(face) {
-  // Immediately emit and close when a face is clicked
-  emit('select', face)
+function selectScene(scene) {
+  emit('select', scene)
   close()
 }
 
 function selectClusterRepresentative(cluster) {
-  // Select the first face in the cluster (most representative, lowest cluster_order)
-  if (cluster.faces.length > 0) {
-    selectFace(cluster.faces[0])
+  if (cluster.scenes.length > 0) {
+    selectScene(cluster.scenes[0])
   }
 }
 
 function close() {
   emit('close')
-  selectedFaceId.value = null
-  selectedFace.value = null
+  selectedSceneId.value = null
 }
 
 // Watch for modal open
 watch(() => props.isOpen, (isOpen) => {
   if (isOpen) {
-    loadFaces()
-  } else {
-    // Clear image cache when closing (save memory)
-    imageCache.value = {}
+    loadScenes()
   }
 })
 </script>

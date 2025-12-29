@@ -243,12 +243,16 @@
               <button @click="clearFaceFilter" class="text-red-400 hover:text-red-300 text-xs ml-auto">x</button>
             </template>
           </div>
-          <!-- Browse all faces button -->
-          <button 
+          <!-- Browse faces button -->
+          <button
             @click="showFaceBrowser = true"
-            class="mt-1.5 w-full px-2 py-1 bg-[#262626] hover:bg-[#333] text-gray-400 hover:text-white text-xs rounded transition"
+            :disabled="!!faceFilter"
+            class="mt-1.5 w-full px-2 py-1 text-xs rounded transition"
+            :class="faceFilter
+              ? 'bg-[#1a1a1a] text-gray-600 cursor-not-allowed'
+              : 'bg-[#262626] hover:bg-[#333] text-gray-400 hover:text-white'"
           >
-            Browse All Faces
+            {{ results.length > 0 ? 'Browse Faces in Selection' : 'Browse All Faces' }}
           </button>
         </div>
 
@@ -258,8 +262,8 @@
             <span>Visual Match</span>
             <span class="flex items-center gap-1">
               <span class="text-gray-500 text-xs normal-case">min</span>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 v-model="thresholds.visualMatch"
                 class="threshold-input"
               />
@@ -273,6 +277,16 @@
               <button @click="clearVisualMatch" class="text-red-400 hover:text-red-300 text-xs ml-auto">x</button>
             </template>
           </div>
+          <button
+            @click="showVisualBrowser = true"
+            :disabled="!!visualMatch"
+            class="mt-1.5 w-full px-2 py-1 text-xs rounded transition"
+            :class="visualMatch
+              ? 'bg-[#1a1a1a] text-gray-600 cursor-not-allowed'
+              : 'bg-[#262626] hover:bg-[#333] text-gray-400 hover:text-white'"
+          >
+            Browse Visual Groups
+          </button>
         </div>
 
         <!-- Actions -->
@@ -723,10 +737,19 @@
     </div>
 
     <!-- Face Browser Modal -->
-    <FaceBrowserModal 
+    <FaceBrowserModal
       :isOpen="showFaceBrowser"
+      :sceneIds="currentResultSceneIds"
       @close="showFaceBrowser = false"
       @select="onFaceBrowserSelect"
+    />
+
+    <!-- Visual Match Browser Modal -->
+    <VisualMatchModal
+      :isOpen="showVisualBrowser"
+      :sceneIds="currentResultSceneIds"
+      @close="showVisualBrowser = false"
+      @select="onVisualBrowserSelect"
     />
   </div>
 </template>
@@ -735,6 +758,7 @@
 import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
 import { api } from '../services/api'
 import FaceBrowserModal from '../components/FaceBrowserModal.vue'
+import VisualMatchModal from '../components/VisualMatchModal.vue'
 
 // Constants
 const PAGE_SIZE = 40
@@ -804,6 +828,7 @@ const selectedScene = ref(null)
 const faceSelectModal = ref(null)
 const showFileDetails = ref(false)
 const showFaceBrowser = ref(false)
+const showVisualBrowser = ref(false)
 
 // Color swatches
 const colorSwatches = [
@@ -861,6 +886,12 @@ const activeFilters = computed(() => {
     }
   }
   return list
+})
+
+// Scene IDs for filtering modals to current selection
+const currentResultSceneIds = computed(() => {
+  if (results.value.length === 0) return null
+  return results.value.map(r => r.id)
 })
 
 // Methods
@@ -1496,6 +1527,10 @@ function setVisualMatch(sceneIndex) {
   visualMatch.value = { sceneIndex }
   addFilter('visual-match')
   search()
+}
+
+function onVisualBrowserSelect(scene) {
+  setVisualMatch(scene.scene_index)
 }
 
 function clearVisualMatch() {

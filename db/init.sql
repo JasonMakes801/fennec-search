@@ -44,7 +44,9 @@ CREATE TABLE scenes (
     start_tc FLOAT,
     end_tc FLOAT,
     poster_frame_path TEXT,      -- Center frame (for thumbnails + player initial display)
-    transcript TEXT              -- Whisper transcript (stored here for full-text search)
+    transcript TEXT,             -- Whisper transcript (stored here for full-text search)
+    clip_cluster_id INTEGER,     -- HDBSCAN cluster assignment (-1 = noise/unclustered)
+    clip_cluster_order FLOAT     -- Distance to cluster centroid (for sorting within cluster)
 );
 
 -- Embeddings (model-versioned vectors for search)
@@ -125,6 +127,9 @@ CREATE INDEX idx_embeddings_model ON embeddings (model_name);
 
 -- Index for face similarity search
 CREATE INDEX ON faces USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+-- Index for scene clustering
+CREATE INDEX idx_scenes_clip_cluster ON scenes (clip_cluster_id);
 
 -- Index for queue processing
 CREATE INDEX ON enrichment_queue (status, queued_at);

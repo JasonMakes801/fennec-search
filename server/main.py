@@ -746,53 +746,99 @@ async def list_faces(limit: int = Query(50, le=200)):
 
 
 @app.get("/api/faces/browse")
-async def browse_faces():
+async def browse_faces(
+    scene_ids: Optional[str] = Query(None, description="Comma-separated scene IDs to filter by")
+):
     """
-    Get all faces grouped by cluster for face browser modal.
-    Returns clusters sorted by size (largest first) and faces 
-    within each cluster sorted by cluster_order (most representative first).
+    Get faces grouped by cluster for face browser modal.
+    Optionally filter to only faces in specified scenes.
+    When filtered, returns one representative face per cluster (most representative).
     """
-    # Get cluster summary first
-    clusters = fetch_all("""
-        SELECT 
-            cluster_id,
-            COUNT(*) as count
-        FROM faces
-        WHERE cluster_id IS NOT NULL AND cluster_id >= 0
-        GROUP BY cluster_id
-        ORDER BY count DESC
-    """)
-    
-    # Get unclustered count
-    unclustered = fetch_one("""
-        SELECT COUNT(*) as count FROM faces WHERE cluster_id IS NULL OR cluster_id = -1
-    """)
-    unclustered_count = unclustered['count'] if unclustered else 0
-    
-    # Get all faces with their scene info, ordered by cluster then cluster_order
-    faces = fetch_all("""
-        SELECT 
-            f.id,
-            f.scene_id,
-            f.cluster_id,
-            f.cluster_order,
-            f.bbox_x,
-            f.bbox_y,
-            f.bbox_w,
-            f.bbox_h,
-            s.scene_index,
-            s.poster_frame_path
-        FROM faces f
-        JOIN scenes s ON f.scene_id = s.id
-        ORDER BY 
-            CASE WHEN f.cluster_id IS NULL OR f.cluster_id = -1 THEN 1 ELSE 0 END,
-            f.cluster_id,
-            f.cluster_order
-    """)
-    
+    # Parse scene_ids if provided
+    scene_id_list = None
+    if scene_ids:
+        scene_id_list = [int(x) for x in scene_ids.split(',') if x.strip()]
+
+    if scene_id_list:
+        # Filtered mode: get clusters present in the filtered scenes
+        placeholders = ','.join(['%s'] * len(scene_id_list))
+
+        clusters = fetch_all(f"""
+            SELECT
+                cluster_id,
+                COUNT(*) as count
+            FROM faces
+            WHERE cluster_id IS NOT NULL AND cluster_id >= 0
+            AND scene_id IN ({placeholders})
+            GROUP BY cluster_id
+            ORDER BY count DESC
+        """, tuple(scene_id_list))
+
+        unclustered = fetch_one(f"""
+            SELECT COUNT(*) as count FROM faces
+            WHERE (cluster_id IS NULL OR cluster_id = -1)
+            AND scene_id IN ({placeholders})
+        """, tuple(scene_id_list))
+        unclustered_count = unclustered['count'] if unclustered else 0
+
+        # Get one representative face per cluster (lowest cluster_order)
+        faces = fetch_all(f"""
+            SELECT DISTINCT ON (COALESCE(f.cluster_id, -1))
+                f.id,
+                f.scene_id,
+                f.cluster_id,
+                f.cluster_order,
+                f.bbox_x,
+                f.bbox_y,
+                f.bbox_w,
+                f.bbox_h,
+                s.scene_index,
+                s.poster_frame_path
+            FROM faces f
+            JOIN scenes s ON f.scene_id = s.id
+            WHERE f.scene_id IN ({placeholders})
+            ORDER BY COALESCE(f.cluster_id, -1), f.cluster_order
+        """, tuple(scene_id_list))
+    else:
+        # Unfiltered mode: return all faces
+        clusters = fetch_all("""
+            SELECT
+                cluster_id,
+                COUNT(*) as count
+            FROM faces
+            WHERE cluster_id IS NOT NULL AND cluster_id >= 0
+            GROUP BY cluster_id
+            ORDER BY count DESC
+        """)
+
+        unclustered = fetch_one("""
+            SELECT COUNT(*) as count FROM faces WHERE cluster_id IS NULL OR cluster_id = -1
+        """)
+        unclustered_count = unclustered['count'] if unclustered else 0
+
+        faces = fetch_all("""
+            SELECT
+                f.id,
+                f.scene_id,
+                f.cluster_id,
+                f.cluster_order,
+                f.bbox_x,
+                f.bbox_y,
+                f.bbox_w,
+                f.bbox_h,
+                s.scene_index,
+                s.poster_frame_path
+            FROM faces f
+            JOIN scenes s ON f.scene_id = s.id
+            ORDER BY
+                CASE WHEN f.cluster_id IS NULL OR f.cluster_id = -1 THEN 1 ELSE 0 END,
+                f.cluster_id,
+                f.cluster_order
+        """)
+
     return {
         "clusters": [
-            {"id": c['cluster_id'], "count": c['count']} 
+            {"id": c['cluster_id'], "count": c['count']}
             for c in clusters
         ],
         "unclustered_count": unclustered_count,
@@ -806,7 +852,129 @@ async def browse_faces():
                 "poster_path": f['poster_frame_path']
             }
             for f in faces
-        ]
+        ],
+        "filtered": scene_id_list is not None
+    }
+
+
+@app.get("/api/scenes/browse")
+async def browse_scenes(
+    scene_ids: Optional[str] = Query(None, description="Comma-separated scene IDs to filter by")
+):
+    """
+    Get scenes grouped by CLIP cluster for visual match browser.
+    Optionally filter to specified scenes.
+    Returns one representative scene per cluster (most representative).
+    """
+    # Parse scene_ids if provided
+    scene_id_list = None
+    if scene_ids:
+        scene_id_list = [int(x) for x in scene_ids.split(',') if x.strip()]
+
+    if scene_id_list:
+        # Filtered mode: get clusters present in the filtered scenes
+        placeholders = ','.join(['%s'] * len(scene_id_list))
+
+        clusters = fetch_all(f"""
+            SELECT
+                clip_cluster_id as cluster_id,
+                COUNT(*) as count
+            FROM scenes s
+            JOIN files f ON s.file_id = f.id
+            WHERE clip_cluster_id IS NOT NULL AND clip_cluster_id >= 0
+            AND f.deleted_at IS NULL
+            AND s.id IN ({placeholders})
+            GROUP BY clip_cluster_id
+            ORDER BY count DESC
+        """, tuple(scene_id_list))
+
+        unclustered = fetch_one(f"""
+            SELECT COUNT(*) as count FROM scenes s
+            JOIN files f ON s.file_id = f.id
+            WHERE (clip_cluster_id IS NULL OR clip_cluster_id = -1)
+            AND f.deleted_at IS NULL
+            AND s.id IN ({placeholders})
+        """, tuple(scene_id_list))
+        unclustered_count = unclustered['count'] if unclustered else 0
+
+        # Get one representative scene per cluster (lowest clip_cluster_order)
+        scenes = fetch_all(f"""
+            SELECT DISTINCT ON (COALESCE(s.clip_cluster_id, -1))
+                s.id,
+                s.scene_index,
+                s.clip_cluster_id as cluster_id,
+                s.clip_cluster_order,
+                s.start_tc,
+                s.end_tc,
+                s.poster_frame_path,
+                f.id as file_id,
+                f.filename
+            FROM scenes s
+            JOIN files f ON s.file_id = f.id
+            WHERE f.deleted_at IS NULL
+            AND s.id IN ({placeholders})
+            ORDER BY COALESCE(s.clip_cluster_id, -1), s.clip_cluster_order
+        """, tuple(scene_id_list))
+    else:
+        # Unfiltered mode: return all scenes (one per cluster)
+        clusters = fetch_all("""
+            SELECT
+                clip_cluster_id as cluster_id,
+                COUNT(*) as count
+            FROM scenes s
+            JOIN files f ON s.file_id = f.id
+            WHERE clip_cluster_id IS NOT NULL AND clip_cluster_id >= 0
+            AND f.deleted_at IS NULL
+            GROUP BY clip_cluster_id
+            ORDER BY count DESC
+        """)
+
+        unclustered = fetch_one("""
+            SELECT COUNT(*) as count FROM scenes s
+            JOIN files f ON s.file_id = f.id
+            WHERE (clip_cluster_id IS NULL OR clip_cluster_id = -1)
+            AND f.deleted_at IS NULL
+        """)
+        unclustered_count = unclustered['count'] if unclustered else 0
+
+        # Get one representative scene per cluster
+        scenes = fetch_all("""
+            SELECT DISTINCT ON (COALESCE(s.clip_cluster_id, -1))
+                s.id,
+                s.scene_index,
+                s.clip_cluster_id as cluster_id,
+                s.clip_cluster_order,
+                s.start_tc,
+                s.end_tc,
+                s.poster_frame_path,
+                f.id as file_id,
+                f.filename
+            FROM scenes s
+            JOIN files f ON s.file_id = f.id
+            WHERE f.deleted_at IS NULL
+            ORDER BY COALESCE(s.clip_cluster_id, -1), s.clip_cluster_order
+        """)
+
+    return {
+        "clusters": [
+            {"id": c['cluster_id'], "count": c['count']}
+            for c in clusters
+        ],
+        "unclustered_count": unclustered_count,
+        "scenes": [
+            {
+                "id": s['id'],
+                "scene_index": s['scene_index'],
+                "cluster_id": s['cluster_id'],
+                "start_time": s['start_tc'],
+                "end_time": s['end_tc'],
+                "poster_path": s['poster_frame_path'],
+                "file_id": s['file_id'],
+                "filename": s['filename']
+            }
+            for s in scenes
+        ],
+        "filtered": scene_id_list is not None
     }
 
 

@@ -10,6 +10,7 @@ from db import get_connection
 from scanner import run_scan, get_stats, get_indexer_state, get_poll_interval, recover_stuck_jobs, set_config, get_config
 from enrichment import run_enrichment
 from face_cluster import cluster_faces
+from scene_cluster import cluster_scenes
 
 
 def format_duration(seconds):
@@ -121,6 +122,10 @@ def main():
             # Re-cluster all faces after new files processed
             print(f"\n🧩 Clustering faces...")
             cluster_faces()
+
+            # Cluster scenes by visual similarity
+            print(f"\n🎬 Clustering scenes...")
+            cluster_scenes()
         
         # Print stats
         print_stats()

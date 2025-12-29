@@ -30,8 +30,10 @@ Find any moment in your media library. Fennec enriches your videos with AI model
 
 ### Prerequisites
 
-- Docker & Docker Compose
+- macOS with Docker Desktop
 - ~10GB disk space for ML models (downloaded on first run)
+
+> **Note:** Linux support is planned for a future release.
 
 ### 1. Clone and Start
 
@@ -212,9 +214,10 @@ Models run on CPU by default. For large files, you may need to increase Docker's
 - **Backend**: FastAPI, Python 3.11
 - **Frontend**: Vue 3, Vite, Tailwind CSS
 - **Database**: PostgreSQL 16 + pgvector
-- **ML Models**: 
+- **ML Models**:
   - CLIP (ViT-B-32) — Visual embeddings
   - Whisper (base) — Speech transcription
+  - all-MiniLM-L6-v2 — Transcript embeddings for semantic dialog search
   - ArcFace (buffalo_l) — Face detection & recognition
 - **Video Processing**: FFmpeg, PySceneDetect
 
@@ -228,7 +231,8 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ## Roadmap
 
-- [ ] GPU acceleration support
+- [ ] Linux support
+- [ ] GPU acceleration
 - [ ] Additional embedding models
 - [ ] Batch export/import
 - [ ] API authentication
@@ -236,4 +240,6 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**Built for anyone with too much video who can't or won't use cloud services.** 🦊
+**Find any moment by what it looks like, what was said, or who's in it.**
+
+Powered by [OpenCLIP](https://github.com/mlfoundations/open_clip) and [sentence-transformers](https://www.sbert.net/). 🦊

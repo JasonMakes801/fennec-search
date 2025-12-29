@@ -1,29 +1,3 @@
-# ==============================================================================
-# MEDIA FOLDERS - Edit this section to configure your video directories
-# ==============================================================================
-# Add the root paths where your video files live.
-# These mounts are shared by both ingest and server containers.
-#
-# Format: /host/path:/container/path:ro
-# The `:ro` means read-only (Fennec never modifies your media files)
-#
-# Examples:
-#   - /Videos:/Videos:ro           # Simple: same path inside container
-#   - /mnt/nas:/mnt/nas:ro         # NAS mount
-#   - /Volumes:/Volumes:ro         # macOS external drives
-# ==============================================================================
-
-x-media-volumes: &media-volumes
-  # macOS defaults - same path inside container for user convenience:
-  - /Users:/Users:ro
-  - /Volumes:/Volumes:ro
-  # Linux examples (uncomment as needed):
-  # - /home:/home:ro
-  # - /mnt:/mnt:ro
-  # - /media:/media:ro
-
-# ==============================================================================
-
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -60,11 +34,10 @@ services:
       # These paths must exist inside the container (see volume mounts below)
       WATCH_FOLDERS: /Users/jason/Dropbox/code/IntelligentVideoSearch/media
     volumes:
-      # App volumes
       - ./ingest:/app
       - fennec_posters:/app/posters
       - fennec_models:/root/.cache
-      # Media volumes - same path inside container for user convenience
+      # macOS media paths (same inside container so your paths just work)
       - /Users:/Users:ro
       - /Volumes:/Volumes:ro
 
@@ -83,10 +56,9 @@ services:
       POSTERS_DIR: /app/posters
       PYTHONUNBUFFERED: 1
     volumes:
-      # App volumes
       - ./server:/app
       - fennec_posters:/app/posters:ro
-      # Media volumes - same path inside container for user convenience
+      # macOS media paths (same inside container so your paths just work)
       - /Users:/Users:ro
       - /Volumes:/Volumes:ro
     ports:
