@@ -1,6 +1,9 @@
 """
 Enrichment processor.
 Runs ML models on queued files.
+
+Note: FFprobe metadata extraction now happens here (deferred from scan phase)
+to keep scans instant. If FFprobe fails, the job is marked as failed.
 """
 
 import os
@@ -10,7 +13,7 @@ from clip_embed import embed_scenes_for_file
 from whisper_transcribe import transcribe_video
 from transcript_embed import embed_transcripts_for_file
 from face_detect import detect_faces_for_file
-from scanner import get_config
+from scanner import get_config, get_video_metadata
 
 
 def get_enabled_models():
@@ -109,58 +112,135 @@ def mark_job_failed(job_id, error):
 
 def get_total_stages(models):
     """Calculate total stages based on enabled models."""
-    return 1 + sum([
-        models.get('clip', False), 
-        models.get('whisper', False), 
+    # +1 for scene detection, +1 for metadata extraction (if needed)
+    return 2 + sum([
+        models.get('clip', False),
+        models.get('whisper', False),
         models.get('transcript_embed', False),
         models.get('arcface', False)
     ])
+
+
+def extract_metadata_if_needed(file_id, video_path):
+    """
+    Extract video metadata with FFprobe if not already present.
+    This is called during enrichment for files where probe was deferred during scan.
+
+    Returns True if metadata is valid, False if file is unreadable.
+    """
+    conn = get_connection()
+    cur = conn.cursor()
+
+    # Check if we already have metadata
+    cur.execute("SELECT duration_seconds FROM files WHERE id = %s", (file_id,))
+    row = cur.fetchone()
+
+    if row and row[0] is not None:
+        # Already have duration, metadata was extracted during scan
+        cur.close()
+        conn.close()
+        return True
+
+    # Extract metadata with FFprobe
+    print(f"    Extracting video metadata...")
+    video_meta = get_video_metadata(video_path)
+
+    # Check if FFprobe succeeded
+    if video_meta['duration_seconds'] is None:
+        cur.close()
+        conn.close()
+        return False  # Unreadable file
+
+    # Update file record with metadata
+    cur.execute("""
+        UPDATE files SET
+            duration_seconds = %s,
+            width = %s,
+            height = %s,
+            fps = %s,
+            codec = %s,
+            audio_tracks = %s,
+            pix_fmt = %s,
+            color_space = %s,
+            color_transfer = %s,
+            color_primaries = %s
+        WHERE id = %s
+    """, (
+        video_meta['duration_seconds'],
+        video_meta['width'],
+        video_meta['height'],
+        video_meta['fps'],
+        video_meta['codec'],
+        video_meta['audio_tracks'],
+        video_meta['pix_fmt'],
+        video_meta['color_space'],
+        video_meta['color_transfer'],
+        video_meta['color_primaries'],
+        file_id
+    ))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return True
 
 
 def process_file(file_id, video_path, job_id=None):
     """
     Run all enrichment steps on a video file.
     Respects model toggles from config.
+
+    Raises ValueError if metadata extraction fails (unreadable file).
     """
     filename = os.path.basename(video_path)
     print(f"\n  📁 {filename}")
-    
+
     models = get_enabled_models()
     step = 0
     total_steps = get_total_stages(models)
-    
-    # Step 1: Scene detection (always runs)
+
+    # Step 1: Extract metadata if needed (deferred from scan phase)
+    step += 1
+    print(f"    [{step}/{total_steps}] Metadata extraction")
+    if job_id:
+        update_job_stage(job_id, 'metadata', step)
+
+    if not extract_metadata_if_needed(file_id, video_path):
+        raise ValueError(f"FFprobe failed - file may be corrupted or unsupported format")
+
+    # Step 2: Scene detection (always runs)
     step += 1
     print(f"    [{step}/{total_steps}] Scene detection")
     if job_id:
         update_job_stage(job_id, 'scene_detection', step)
     detect_scenes(video_path, file_id)
     
-    # Step 2: CLIP embeddings for each scene
+    # Step 3: CLIP embeddings for each scene
     if models.get('clip', True):
         step += 1
         print(f"    [{step}/{total_steps}] CLIP embeddings")
         if job_id:
             update_job_stage(job_id, 'clip', step)
         embed_scenes_for_file(file_id)
-    
-    # Step 3: Whisper transcription
+
+    # Step 4: Whisper transcription
     if models.get('whisper', True):
         step += 1
         print(f"    [{step}/{total_steps}] Whisper transcription")
         if job_id:
             update_job_stage(job_id, 'whisper', step)
         transcribe_video(video_path, file_id)
-    
-    # Step 4: Transcript embeddings (semantic search)
+
+    # Step 5: Transcript embeddings (semantic search)
     if models.get('transcript_embed', True):
         step += 1
         print(f"    [{step}/{total_steps}] Transcript embeddings")
         if job_id:
             update_job_stage(job_id, 'transcript_embed', step)
         embed_transcripts_for_file(file_id)
-    
-    # Step 5: ArcFace face detection
+
+    # Step 6: ArcFace face detection
     if models.get('arcface', True):
         step += 1
         print(f"    [{step}/{total_steps}] Face detection")

@@ -2,13 +2,27 @@
 File scanner for the ingest service.
 Scans watch folders for video files and adds them to the database.
 Uses polling (no watchdog) for NFS/SMB compatibility.
+
+Performance notes:
+- Uses os.scandir() instead of os.walk() for faster directory traversal
+- FFprobe metadata extraction is deferred to enrichment phase for instant scans
+- Progress is written to DB for Reports UI visibility
 """
 
 import os
 import subprocess
 import json
+import logging
 from datetime import datetime
 from db import get_connection
+
+# Configure logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%H:%M:%S'
+)
 
 
 # Supported video extensions
@@ -78,6 +92,38 @@ def get_indexer_state():
 def get_poll_interval():
     """Get poll interval in seconds."""
     return get_config('poll_interval_seconds', 3600)
+
+
+# ============ Scan Progress Tracking ============
+
+def update_scan_progress(phase, current_folder=None, dirs_scanned=0, files_found=0,
+                         files_processed=0, files_new=0, files_updated=0, files_skipped=0):
+    """
+    Update scan progress in config table for UI visibility.
+    This allows the Reports page to show what the scanner is doing.
+    """
+    progress = {
+        'phase': phase,  # 'discovering', 'processing', 'checking_missing', 'complete', 'idle'
+        'current_folder': current_folder,
+        'dirs_scanned': dirs_scanned,
+        'files_found': files_found,
+        'files_processed': files_processed,
+        'files_new': files_new,
+        'files_updated': files_updated,
+        'files_skipped': files_skipped,
+        'updated_at': datetime.now().isoformat()
+    }
+    set_config('scan_progress', progress)
+
+
+def clear_scan_progress():
+    """Clear scan progress (set to idle state)."""
+    update_scan_progress('idle')
+
+
+def get_scan_progress():
+    """Get current scan progress."""
+    return get_config('scan_progress', {'phase': 'idle'})
 
 
 def is_video_file(path):
@@ -192,67 +238,137 @@ def get_file_metadata(filepath):
     return metadata
 
 
-def scan_folder(folder_path):
+def scan_folder(folder_path, on_progress=None):
     """
-    Scan a folder recursively for video files.
+    Scan a folder recursively for video files using os.scandir (faster than os.walk).
     Returns list of absolute paths.
+
+    Args:
+        folder_path: Root folder to scan
+        on_progress: Optional callback(dirs_scanned, current_dir) for progress updates
     """
     videos = []
-    
+    dirs_scanned = 0
+
     if not os.path.exists(folder_path):
         print(f"  ⚠️  Folder not found: {folder_path}")
+        logger.warning(f"Folder not found: {folder_path}")
         return videos
-    
-    for root, dirs, files in os.walk(folder_path):
-        for filename in files:
-            filepath = os.path.join(root, filename)
-            if is_video_file(filepath):
-                videos.append(filepath)
-    
+
+    def _scan_recursive(path):
+        nonlocal dirs_scanned
+        try:
+            with os.scandir(path) as entries:
+                dirs_scanned += 1
+                subdirs = []
+
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            subdirs.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            if is_video_file(entry.name):
+                                videos.append(entry.path)
+                    except (PermissionError, OSError):
+                        continue
+
+                # Log progress every 100 directories
+                if dirs_scanned % 100 == 0:
+                    logger.info(f"Scanned {dirs_scanned} directories, found {len(videos)} videos so far...")
+                    if on_progress:
+                        on_progress(dirs_scanned, path)
+
+                # Recurse into subdirectories
+                for subdir in subdirs:
+                    _scan_recursive(subdir)
+
+        except (PermissionError, OSError) as e:
+            logger.debug(f"Cannot access {path}: {e}")
+
+    _scan_recursive(folder_path)
+    logger.info(f"Scan complete: {dirs_scanned} directories, {len(videos)} videos found")
+
     return videos
 
 
-def add_file_to_db(filepath):
+def add_file_to_db(filepath, defer_probe=True):
     """
     Add a video file to the database if it doesn't exist,
     or re-queue if the file has been modified since last indexing.
-    Extracts both video and file metadata.
+
+    Args:
+        filepath: Path to video file
+        defer_probe: If True (default), skip FFprobe during scan - metadata will be
+                     extracted during enrichment phase. This makes scans instant.
+
     Returns (file_id, is_new, was_updated).
     """
     conn = get_connection()
     cur = conn.cursor()
-    
-    # Get current file's modified time
+
+    # Get current file's modified time and size (fast - no FFprobe)
     current_mtime = None
+    current_size = None
     try:
         stat = os.stat(filepath)
         current_mtime = datetime.fromtimestamp(stat.st_mtime)
-    except Exception:
-        pass
-    
+        current_size = stat.st_size
+    except Exception as e:
+        logger.warning(f"Cannot stat file {filepath}: {e}")
+        cur.close()
+        conn.close()
+        return None, False, False
+
     # Check if file already exists
-    cur.execute("SELECT id, deleted_at, file_modified_at, indexed_at FROM files WHERE path = %s", (filepath,))
+    cur.execute("SELECT id, deleted_at, file_modified_at, file_size_bytes, indexed_at FROM files WHERE path = %s", (filepath,))
     existing = cur.fetchone()
-    
+
     if existing:
-        file_id, deleted_at, db_mtime, indexed_at = existing
-        
+        file_id, deleted_at, db_mtime, db_size, indexed_at = existing
+
         if deleted_at is not None:
             # File was soft-deleted but reappeared - resurrect it
+            logger.info(f"Resurrecting previously deleted file: {filepath}")
             cur.execute("UPDATE files SET deleted_at = NULL WHERE id = %s", (file_id,))
             conn.commit()
             cur.close()
             conn.close()
             return file_id, True, False  # Treat as new for re-enrichment
-        
+
         # Check if file has been modified since last indexing
+        # Use both mtime and size for faster detection
+        file_changed = False
         if indexed_at is not None and current_mtime is not None and db_mtime is not None:
             # Compare timestamps (allow 1 second tolerance for filesystem precision)
             if current_mtime > db_mtime and (current_mtime - db_mtime).total_seconds() > 1:
-                # File was modified - update metadata and re-queue
-                file_meta = get_file_metadata(filepath)
+                file_changed = True
+            # Also check size - quick way to detect changes
+            if current_size is not None and db_size is not None and current_size != db_size:
+                file_changed = True
+
+        if file_changed:
+            logger.info(f"File modified, re-queuing: {filepath}")
+            # File was modified - update basic metadata and re-queue
+            # FFprobe will run during enrichment if defer_probe=True
+            file_meta = get_file_metadata(filepath)
+
+            if defer_probe:
+                # Just update file metadata, FFprobe runs during enrichment
+                cur.execute("""
+                    UPDATE files SET
+                        file_modified_at = %s,
+                        file_size_bytes = %s,
+                        indexed_at = NULL,
+                        duration_seconds = NULL,
+                        width = NULL,
+                        height = NULL,
+                        fps = NULL,
+                        codec = NULL,
+                        audio_tracks = NULL
+                    WHERE id = %s
+                """, (file_meta['file_modified_at'], file_meta['file_size_bytes'], file_id))
+            else:
                 video_meta = get_video_metadata(filepath)
-                
                 cur.execute("""
                     UPDATE files SET
                         file_modified_at = %s,
@@ -276,61 +392,83 @@ def add_file_to_db(filepath):
                     video_meta['audio_tracks'],
                     file_id
                 ))
-                
-                # Clear old enrichment data
-                cur.execute("DELETE FROM scenes WHERE file_id = %s", (file_id,))
-                
-                # Re-queue for enrichment (delete old entry if exists, then insert new)
-                cur.execute("DELETE FROM enrichment_queue WHERE file_id = %s", (file_id,))
-                cur.execute("""
-                    INSERT INTO enrichment_queue (file_id, status, queued_at)
-                    VALUES (%s, 'pending', NOW())
-                """, (file_id,))
-                
-                conn.commit()
-                cur.close()
-                conn.close()
-                return file_id, False, True  # Existing file, was updated
-        
+
+            # Clear old enrichment data
+            cur.execute("DELETE FROM scenes WHERE file_id = %s", (file_id,))
+
+            # Re-queue for enrichment (delete old entry if exists, then insert new)
+            cur.execute("DELETE FROM enrichment_queue WHERE file_id = %s", (file_id,))
+            cur.execute("""
+                INSERT INTO enrichment_queue (file_id, status, queued_at)
+                VALUES (%s, 'pending', NOW())
+            """, (file_id,))
+
+            conn.commit()
+            cur.close()
+            conn.close()
+            return file_id, False, True  # Existing file, was updated
+
         cur.close()
         conn.close()
         return file_id, False, False
-    
-    # Get metadata
-    video_meta = get_video_metadata(filepath)
+
+    # New file - add to database
     file_meta = get_file_metadata(filepath)
     filename = os.path.basename(filepath)
-    
-    # Validate: skip files FFprobe can't read (no duration = unreadable)
-    if video_meta['duration_seconds'] is None:
-        cur.close()
-        conn.close()
-        return None, False, False  # Unreadable file, skip it
-    
-    # Insert new file with all metadata
-    cur.execute(
-        """
-        INSERT INTO files (
-            path, filename, 
-            duration_seconds, width, height, fps, codec, audio_tracks,
-            file_size_bytes, file_created_at, file_modified_at, parent_folder,
-            pix_fmt, color_space, color_transfer, color_primaries
+
+    if defer_probe:
+        # Insert with minimal metadata - FFprobe runs during enrichment
+        logger.debug(f"Adding new file (deferred probe): {filepath}")
+        cur.execute(
+            """
+            INSERT INTO files (
+                path, filename,
+                file_size_bytes, file_created_at, file_modified_at, parent_folder
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                filepath, filename,
+                file_meta['file_size_bytes'], file_meta['file_created_at'],
+                file_meta['file_modified_at'], file_meta['parent_folder']
+            )
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        RETURNING id
-        """,
-        (
-            filepath, filename,
-            video_meta['duration_seconds'], video_meta['width'], video_meta['height'],
-            video_meta['fps'], video_meta['codec'], video_meta['audio_tracks'],
-            file_meta['file_size_bytes'], file_meta['file_created_at'],
-            file_meta['file_modified_at'], file_meta['parent_folder'],
-            video_meta['pix_fmt'], video_meta['color_space'],
-            video_meta['color_transfer'], video_meta['color_primaries']
+    else:
+        # Immediate probe (legacy behavior)
+        video_meta = get_video_metadata(filepath)
+
+        # Validate: skip files FFprobe can't read (no duration = unreadable)
+        if video_meta['duration_seconds'] is None:
+            logger.warning(f"FFprobe failed, skipping: {filepath}")
+            cur.close()
+            conn.close()
+            return None, False, False  # Unreadable file, skip it
+
+        cur.execute(
+            """
+            INSERT INTO files (
+                path, filename,
+                duration_seconds, width, height, fps, codec, audio_tracks,
+                file_size_bytes, file_created_at, file_modified_at, parent_folder,
+                pix_fmt, color_space, color_transfer, color_primaries
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                filepath, filename,
+                video_meta['duration_seconds'], video_meta['width'], video_meta['height'],
+                video_meta['fps'], video_meta['codec'], video_meta['audio_tracks'],
+                file_meta['file_size_bytes'], file_meta['file_created_at'],
+                file_meta['file_modified_at'], file_meta['parent_folder'],
+                video_meta['pix_fmt'], video_meta['color_space'],
+                video_meta['color_transfer'], video_meta['color_primaries']
+            )
         )
-    )
+
     file_id = cur.fetchone()[0]
-    
+
     # Add to enrichment queue
     cur.execute(
         """
@@ -339,11 +477,11 @@ def add_file_to_db(filepath):
         """,
         (file_id,)
     )
-    
+
     conn.commit()
     cur.close()
     conn.close()
-    
+
     return file_id, True, False  # New file
 
 
@@ -463,53 +601,120 @@ def get_stats():
 def run_scan():
     """
     Run a full scan of all watch folders.
-    Returns (total_found, new_added).
+    Returns (total_found, new_added, updated, skipped).
+
+    Scan is now instant because FFprobe is deferred to enrichment phase.
+    Progress is written to DB for UI visibility.
     """
     import time
     start_time = time.time()
-    
+
     watch_folders = get_watch_folders()
-    
+
     if not watch_folders:
         print("  No watch folders configured")
+        logger.warning("No watch folders configured")
+        clear_scan_progress()
         return 0, 0, 0, 0
-    
+
     total_found = 0
     new_added = 0
     updated = 0
     skipped = 0
-    
-    # First pass: find new/modified files
+    total_dirs_scanned = 0
+
+    # Phase 1: Discover video files (fast - no FFprobe)
+    all_videos = []
     for folder in watch_folders:
-        print(f"  Scanning: {folder}")
-        videos = scan_folder(folder)
-        total_found += len(videos)
-        
-        for filepath in videos:
-            file_id, is_new, was_updated = add_file_to_db(filepath)
-            if file_id is None:
-                # File couldn't be read by FFprobe (R3D, BRAW, corrupted, etc.)
-                skipped += 1
-                continue
-            if is_new:
-                new_added += 1
-                print(f"    + {os.path.basename(filepath)}")
-            elif was_updated:
-                updated += 1
-                print(f"    ↻ {os.path.basename(filepath)} (modified)")
-    
-    # Second pass: mark missing files
+        print(f"  Discovering videos in: {folder}")
+        logger.info(f"Discovering videos in: {folder}")
+
+        def on_progress(dirs_scanned, current_dir):
+            update_scan_progress(
+                phase='discovering',
+                current_folder=current_dir,
+                dirs_scanned=total_dirs_scanned + dirs_scanned,
+                files_found=total_found + len(all_videos)
+            )
+
+        update_scan_progress(
+            phase='discovering',
+            current_folder=folder,
+            dirs_scanned=total_dirs_scanned
+        )
+
+        videos = scan_folder(folder, on_progress=on_progress)
+        all_videos.extend(videos)
+        total_dirs_scanned += 1  # At minimum the root folder
+
+    total_found = len(all_videos)
+    logger.info(f"Discovery complete: {total_found} videos found")
+    print(f"  Found {total_found} video files")
+
+    # Phase 2: Process files (add to DB - still fast since FFprobe is deferred)
+    update_scan_progress(
+        phase='processing',
+        files_found=total_found,
+        files_processed=0
+    )
+
+    for i, filepath in enumerate(all_videos):
+        file_id, is_new, was_updated = add_file_to_db(filepath, defer_probe=True)
+
+        if file_id is None:
+            # File couldn't be accessed (permissions, etc.)
+            skipped += 1
+            logger.debug(f"Skipped inaccessible file: {filepath}")
+            continue
+
+        if is_new:
+            new_added += 1
+            print(f"    + {os.path.basename(filepath)}")
+            logger.info(f"New file: {filepath}")
+        elif was_updated:
+            updated += 1
+            print(f"    ↻ {os.path.basename(filepath)} (modified)")
+            logger.info(f"Modified file: {filepath}")
+
+        # Update progress every 10 files or at end
+        if (i + 1) % 10 == 0 or i == len(all_videos) - 1:
+            update_scan_progress(
+                phase='processing',
+                files_found=total_found,
+                files_processed=i + 1,
+                files_new=new_added,
+                files_updated=updated,
+                files_skipped=skipped
+            )
+
+    # Phase 3: Mark missing files
+    update_scan_progress(phase='checking_missing')
+    logger.info("Checking for missing files...")
     deleted = mark_missing_files(watch_folders)
     if deleted > 0:
         print(f"  Marked {deleted} missing files as deleted")
-    
+        logger.info(f"Marked {deleted} missing files as deleted")
+
     # Log skipped files
     if skipped > 0:
-        print(f"  Skipped {skipped} unreadable files (R3D, BRAW, corrupted, etc.)")
-    
+        print(f"  Skipped {skipped} inaccessible files")
+        logger.warning(f"Skipped {skipped} inaccessible files")
+
     # Record scan metadata
     duration_ms = int((time.time() - start_time) * 1000)
     set_config('last_scan_at', datetime.now().isoformat())
     set_config('last_scan_duration_ms', duration_ms)
-    
+
+    # Mark scan complete
+    update_scan_progress(
+        phase='complete',
+        files_found=total_found,
+        files_processed=total_found,
+        files_new=new_added,
+        files_updated=updated,
+        files_skipped=skipped
+    )
+
+    logger.info(f"Scan complete in {duration_ms}ms: {total_found} found, {new_added} new, {updated} modified")
+
     return total_found, new_added, updated, skipped

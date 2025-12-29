@@ -22,6 +22,60 @@
       </div>
     </div>
 
+    <!-- Scan Progress (shown when scanning) -->
+    <section v-if="scanProgress.phase !== 'idle'" class="bg-[#171717] rounded-lg p-6 mb-6 border border-yellow-500/30">
+      <div class="flex items-center gap-2 mb-4">
+        <div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
+        <h2 class="text-lg font-medium">Scanning Files</h2>
+        <span class="text-sm text-gray-500">{{ formatScanPhase(scanProgress.phase) }}</span>
+      </div>
+
+      <div class="bg-[#262626] rounded-lg p-4">
+        <!-- Current folder (during discovery) -->
+        <div v-if="scanProgress.current_folder" class="text-sm text-gray-400 mb-3 truncate">
+          📂 {{ scanProgress.current_folder }}
+        </div>
+
+        <!-- Progress stats -->
+        <div class="grid grid-cols-4 gap-4 text-center mb-3">
+          <div>
+            <div class="text-xl font-semibold text-yellow-400">{{ scanProgress.files_found || 0 }}</div>
+            <div class="text-xs text-gray-500">Found</div>
+          </div>
+          <div>
+            <div class="text-xl font-semibold text-green-400">{{ scanProgress.files_new || 0 }}</div>
+            <div class="text-xs text-gray-500">New</div>
+          </div>
+          <div>
+            <div class="text-xl font-semibold text-blue-400">{{ scanProgress.files_updated || 0 }}</div>
+            <div class="text-xs text-gray-500">Modified</div>
+          </div>
+          <div>
+            <div class="text-xl font-semibold text-gray-400">{{ scanProgress.files_processed || 0 }}</div>
+            <div class="text-xs text-gray-500">Processed</div>
+          </div>
+        </div>
+
+        <!-- Progress bar (during processing phase) -->
+        <div v-if="scanProgress.phase === 'processing' && scanProgress.files_found > 0">
+          <div class="h-2 bg-[#1a1a1a] rounded-full overflow-hidden">
+            <div
+              class="h-full bg-yellow-500 transition-all duration-300"
+              :style="{ width: `${(scanProgress.files_processed / scanProgress.files_found) * 100}%` }"
+            ></div>
+          </div>
+          <div class="text-xs text-gray-500 mt-1 text-right">
+            {{ scanProgress.files_processed }}/{{ scanProgress.files_found }}
+          </div>
+        </div>
+
+        <!-- Directories scanned (during discovery) -->
+        <div v-if="scanProgress.phase === 'discovering' && scanProgress.dirs_scanned > 0" class="text-xs text-gray-500">
+          Scanned {{ scanProgress.dirs_scanned }} directories...
+        </div>
+      </div>
+    </section>
+
     <!-- Currently Processing -->
     <section v-if="queue.current" class="bg-[#171717] rounded-lg p-6 mb-6 border border-blue-500/30">
       <div class="flex items-center gap-2 mb-4">
@@ -235,11 +289,23 @@ const vectorStats = reactive({
   models: []
 })
 
+const scanProgress = reactive({
+  phase: 'idle',
+  current_folder: null,
+  dirs_scanned: 0,
+  files_found: 0,
+  files_processed: 0,
+  files_new: 0,
+  files_updated: 0,
+  files_skipped: 0
+})
+
 const recentFiles = ref([])
 let pollInterval = null
 
-// Stage definitions for display
+// Stage definitions for display (includes metadata extraction as first step)
 const stages = [
+  { id: 'metadata', name: 'Metadata Extraction', short: 'Metadata' },
   { id: 'scene_detection', name: 'Scene Detection', short: 'Scenes' },
   { id: 'clip', name: 'CLIP Embeddings', short: 'CLIP' },
   { id: 'whisper', name: 'Whisper Transcription', short: 'Whisper' },
@@ -251,6 +317,17 @@ function formatStageName(stageId) {
   if (!stageId || stageId === 'starting') return 'Starting...'
   const stage = stages.find(s => s.id === stageId)
   return stage ? stage.name : stageId
+}
+
+function formatScanPhase(phase) {
+  const phases = {
+    'idle': '',
+    'discovering': 'Discovering videos...',
+    'processing': 'Adding to database...',
+    'checking_missing': 'Checking for removed files...',
+    'complete': 'Scan complete'
+  }
+  return phases[phase] || phase
 }
 
 function formatDuration(seconds) {
@@ -315,21 +392,39 @@ async function loadRecentFiles() {
   }
 }
 
+async function loadScanProgress() {
+  try {
+    const data = await api.getScanProgress()
+    scanProgress.phase = data.phase || 'idle'
+    scanProgress.current_folder = data.current_folder || null
+    scanProgress.dirs_scanned = data.dirs_scanned || 0
+    scanProgress.files_found = data.files_found || 0
+    scanProgress.files_processed = data.files_processed || 0
+    scanProgress.files_new = data.files_new || 0
+    scanProgress.files_updated = data.files_updated || 0
+    scanProgress.files_skipped = data.files_skipped || 0
+  } catch (err) {
+    console.error('Failed to load scan progress:', err)
+  }
+}
+
 onMounted(() => {
   loadStats()
   loadQueue()
   loadVectorStats()
   loadRecentFiles()
-  
-  // Poll queue status every 3 seconds for live updates
+  loadScanProgress()
+
+  // Poll for live updates every 2 seconds
   pollInterval = setInterval(() => {
     loadQueue()
-    // Also refresh stats when processing
-    if (queue.processing > 0) {
+    loadScanProgress()
+    // Also refresh stats when processing or scanning
+    if (queue.processing > 0 || scanProgress.phase !== 'idle') {
       loadStats()
       loadVectorStats()
     }
-  }, 3000)
+  }, 2000)
 })
 
 onUnmounted(() => {

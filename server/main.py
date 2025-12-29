@@ -1027,17 +1027,17 @@ async def get_face(face_id: int):
 async def get_queue():
     """Get enrichment queue status including current processing job."""
     stats = fetch_one("""
-        SELECT 
+        SELECT
             COUNT(*) FILTER (WHERE status = 'pending') as pending,
             COUNT(*) FILTER (WHERE status = 'processing') as processing,
             COUNT(*) FILTER (WHERE status = 'complete') as complete,
             COUNT(*) FILTER (WHERE status = 'failed') as failed
         FROM enrichment_queue
     """)
-    
+
     # Get currently processing job details
     current = fetch_one("""
-        SELECT 
+        SELECT
             eq.id,
             eq.current_stage,
             eq.current_stage_num,
@@ -1052,11 +1052,33 @@ async def get_queue():
         ORDER BY eq.started_at DESC
         LIMIT 1
     """)
-    
+
     return {
         **stats,
         'current': current
     }
+
+
+@app.get("/api/scan/progress")
+async def get_scan_progress():
+    """
+    Get current scan progress for Reports UI.
+
+    Returns progress info including:
+    - phase: 'idle', 'discovering', 'processing', 'checking_missing', 'complete'
+    - current_folder: folder being scanned (during discovery)
+    - dirs_scanned: number of directories scanned
+    - files_found: total video files discovered
+    - files_processed: files added/checked in DB
+    - files_new: newly added files
+    - files_updated: modified files re-queued
+    - files_skipped: inaccessible files
+    - updated_at: timestamp of last progress update
+    """
+    row = fetch_one("SELECT value FROM config WHERE key = 'scan_progress'")
+    if not row or not row.get('value'):
+        return {'phase': 'idle'}
+    return row['value']
 
 
 # ============ Config ============

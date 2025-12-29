@@ -100,7 +100,12 @@ export const api = {
   async getQueue() {
     return fetchJSON('/queue')
   },
-  
+
+  // Scan progress
+  async getScanProgress() {
+    return fetchJSON('/scan/progress')
+  },
+
   // Config
   async getConfig(key) {
     return fetchJSON(`/config/${key}`)
