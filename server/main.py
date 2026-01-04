@@ -76,9 +76,8 @@ def get_clip_model():
     if _clip_model is None:
         try:
             import open_clip
-            # Disable meta tensor lazy loading by creating model then loading weights
             _clip_model, _, _ = open_clip.create_model_and_transforms(
-                'ViT-B-32', pretrained='laion2b_s34b_b79k', precision='fp32', device='cpu'
+                'ViT-B-32', pretrained='laion2b_s34b_b79k'
             )
             _clip_tokenizer = open_clip.get_tokenizer('ViT-B-32')
             _clip_model.eval()
