@@ -75,18 +75,19 @@ def get_clip_model():
     global _clip_model, _clip_tokenizer, _clip_loaded
     if _clip_model is None:
         try:
-            import torch
             import open_clip
-            # Force CPU device to avoid meta tensor issues on low-memory systems
-            device = torch.device('cpu')
+            # Disable meta tensor lazy loading by creating model then loading weights
             _clip_model, _, _ = open_clip.create_model_and_transforms(
-                'ViT-B-32', pretrained='laion2b_s34b_b79k', device=device
+                'ViT-B-32', pretrained='laion2b_s34b_b79k', precision='fp32', device='cpu'
             )
             _clip_tokenizer = open_clip.get_tokenizer('ViT-B-32')
             _clip_model.eval()
             _clip_loaded = True
+            print("✓ CLIP model loaded successfully")
         except Exception as e:
             print(f"Warning: Could not load CLIP model: {e}")
+            import traceback
+            traceback.print_exc()
             return None, None
     return _clip_model, _clip_tokenizer
 
