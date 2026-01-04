@@ -1,6 +1,15 @@
 // API service for communicating with FastAPI backend
+import { reactive } from 'vue'
 
 const API_BASE = '/api'
+
+// Shared server status state - updated by App.vue, read by Search.vue
+export const serverStatus = reactive({
+  modelsReady: false,
+  clipLoaded: false,
+  sentenceLoaded: false,
+  indexerState: 'offline'
+})
 
 async function fetchJSON(url, options = {}) {
   const response = await fetch(API_BASE + url, {
@@ -31,7 +40,7 @@ export const api = {
     if (params.face_index !== undefined) query.set('face_index', params.face_index)
     if (params.face_id !== undefined) query.set('face_id', params.face_id)
     if (params.face_threshold) query.set('face_threshold', params.face_threshold)
-    if (params.visual_match_scene !== undefined) query.set('visual_match_scene', params.visual_match_scene)
+    if (params.visual_match_scene_id !== undefined) query.set('visual_match_scene_id', params.visual_match_scene_id)
     if (params.visual_match_threshold) query.set('visual_match_threshold', params.visual_match_threshold)
     if (params.tc_min !== undefined) query.set('tc_min', params.tc_min)
     if (params.tc_max !== undefined) query.set('tc_max', params.tc_max)
@@ -71,8 +80,8 @@ export const api = {
   },
   
   // Files
-  async getFiles(limit = 10) {
-    return fetchJSON(`/files?limit=${limit}`)
+  async getFiles(limit = 10, completed = false) {
+    return fetchJSON(`/files?limit=${limit}&completed=${completed}`)
   },
   
   async getFile(id) {
@@ -82,6 +91,10 @@ export const api = {
   // Stats
   async getStats() {
     return fetchJSON('/stats')
+  },
+
+  async getReady() {
+    return fetchJSON('/ready')
   },
   
   // Vector stats (coverage by model)
@@ -116,5 +129,39 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ value })
     })
+  },
+
+  // Watch folders with accessibility status
+  async getWatchFolders() {
+    return fetchJSON('/watch-folders')
+  },
+
+  // Admin
+  async getAdminStatus() {
+    return fetchJSON('/admin/status')
+  },
+
+  async resetFailedJobs() {
+    return fetchJSON('/admin/reset-failed-jobs', { method: 'POST' })
+  },
+
+  async resetProcessingJobs() {
+    return fetchJSON('/admin/reset-processing-jobs', { method: 'POST' })
+  },
+
+  async purgeDeleted() {
+    return fetchJSON('/admin/purge-deleted', { method: 'POST' })
+  },
+
+  async purgeOrphans() {
+    return fetchJSON('/admin/purge-orphans', { method: 'POST' })
+  },
+
+  async wipeDatabase() {
+    return fetchJSON('/admin/database', { method: 'DELETE' })
+  },
+
+  async restartServer() {
+    return fetchJSON('/admin/restart-server', { method: 'POST' })
   }
 }

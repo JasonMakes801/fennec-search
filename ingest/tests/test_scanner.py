@@ -99,20 +99,22 @@ class TestFileScanning:
         dest = os.path.join(temp_watch_folder, "video.mp4")
         shutil.copy(test_video_normal, dest)
         
-        files = list(scan_folder(temp_watch_folder))
+        files, dirs_scanned = scan_folder(temp_watch_folder)
         assert len(files) == 1
         assert files[0] == dest
-    
+        assert dirs_scanned == 1  # Just the root folder
+
     def test_scan_folder_ignores_non_video(self, temp_watch_folder):
         """Should ignore non-video files."""
         # Create non-video file
         txt_file = os.path.join(temp_watch_folder, "readme.txt")
         with open(txt_file, 'w') as f:
             f.write("test")
-        
-        files = list(scan_folder(temp_watch_folder))
+
+        files, dirs_scanned = scan_folder(temp_watch_folder)
         assert len(files) == 0
-    
+        assert dirs_scanned == 1
+
     def test_scan_folder_recursive(self, temp_watch_folder, test_video_normal):
         """Should scan subdirectories."""
         # Create subdirectory with video
@@ -120,15 +122,17 @@ class TestFileScanning:
         os.makedirs(subdir)
         dest = os.path.join(subdir, "video.mp4")
         shutil.copy(test_video_normal, dest)
-        
-        files = list(scan_folder(temp_watch_folder))
+
+        files, dirs_scanned = scan_folder(temp_watch_folder)
         assert len(files) == 1
         assert "subdir" in files[0]
-    
+        assert dirs_scanned == 2  # Root + subdir
+
     def test_scan_missing_folder(self):
         """Should handle missing folders gracefully."""
-        files = list(scan_folder("/nonexistent/path"))
+        files, dirs_scanned = scan_folder("/nonexistent/path")
         assert len(files) == 0
+        assert dirs_scanned == 0
 
 
 class TestDatabaseOperations:

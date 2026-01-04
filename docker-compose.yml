@@ -20,6 +20,7 @@ services:
   ingest:
     build: ./ingest
     container_name: fennec-ingest
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
@@ -32,7 +33,7 @@ services:
       PYTHONUNBUFFERED: 1
       # Comma-separated list of folders to scan for video files
       # These paths must exist inside the container (see volume mounts below)
-      WATCH_FOLDERS: /Users/jason/Dropbox/code/IntelligentVideoSearch/media
+      WATCH_FOLDERS: /Volumes/BackupOne/FennecSearchMedia2/
     volumes:
       - ./ingest:/app
       - fennec_posters:/app/posters
@@ -44,10 +45,12 @@ services:
   server:
     build: ./server
     container_name: fennec-server
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
     environment:
+      DEMO_MODE: "false"
       DB_HOST: db
       DB_PORT: 5432
       DB_NAME: fennec

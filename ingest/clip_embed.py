@@ -1,6 +1,6 @@
 """
 CLIP embedding generation for visual search.
-Uses OpenCLIP with ViT-B-32 model (CPU inference).
+Uses OpenCLIP with ViT-B-32 model (MPS on Apple Silicon, CPU fallback).
 """
 
 import open_clip
@@ -18,27 +18,37 @@ MODEL_DIMENSION = 512
 _model = None
 _preprocess = None
 _tokenizer = None
+_device = None
+
+
+def get_device():
+    """Get best available device (MPS on Apple Silicon, else CPU)."""
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
 
 
 def load_model():
     """Load CLIP model (ViT-B-32). Downloads on first run (~400MB)."""
-    global _model, _preprocess, _tokenizer
-    
+    global _model, _preprocess, _tokenizer, _device
+
     if _model is not None:
-        return _model, _preprocess, _tokenizer
-    
-    print("    Loading CLIP model (first run downloads ~400MB)...")
-    
+        return _model, _preprocess, _tokenizer, _device
+
+    _device = get_device()
+    print(f"    Loading CLIP model on {_device} (first run downloads ~400MB)...")
+
     _model, _, _preprocess = open_clip.create_model_and_transforms(
         'ViT-B-32',
         pretrained='laion2b_s34b_b79k'
     )
     _tokenizer = open_clip.get_tokenizer('ViT-B-32')
-    
-    _model.eval()  # Set to evaluation mode
-    
-    print("    ✓ CLIP model loaded")
-    return _model, _preprocess, _tokenizer
+
+    _model.eval()
+    _model.to(_device)
+
+    print(f"    ✓ CLIP model loaded on {_device}")
+    return _model, _preprocess, _tokenizer, _device
 
 
 def embed_image(image_path):
@@ -46,17 +56,16 @@ def embed_image(image_path):
     Generate CLIP embedding for an image.
     Returns a 512-dim numpy array.
     """
-    model, preprocess, _ = load_model()
-    
+    model, preprocess, _, device = load_model()
+
     image = Image.open(image_path).convert('RGB')
-    image_tensor = preprocess(image).unsqueeze(0)
-    
+    image_tensor = preprocess(image).unsqueeze(0).to(device)
+
     with torch.no_grad():
         embedding = model.encode_image(image_tensor)
-        # Normalize embedding
         embedding = embedding / embedding.norm(dim=-1, keepdim=True)
-    
-    return embedding.squeeze().numpy()
+
+    return embedding.squeeze().cpu().numpy()
 
 
 def embed_text(text):
@@ -64,16 +73,15 @@ def embed_text(text):
     Generate CLIP embedding for text query.
     Returns a 512-dim numpy array.
     """
-    model, _, tokenizer = load_model()
-    
-    tokens = tokenizer([text])
-    
+    model, _, tokenizer, device = load_model()
+
+    tokens = tokenizer([text]).to(device)
+
     with torch.no_grad():
         embedding = model.encode_text(tokens)
-        # Normalize embedding
         embedding = embedding / embedding.norm(dim=-1, keepdim=True)
-    
-    return embedding.squeeze().numpy()
+
+    return embedding.squeeze().cpu().numpy()
 
 
 def embed_scenes_for_file(file_id):
@@ -103,9 +111,11 @@ def embed_scenes_for_file(file_id):
         return 0
     
     total = len(scenes)
-    
+    _, _, _, device = load_model()
+    device_label = str(device).upper()
+
     for i, (scene_id, poster_path) in enumerate(scenes, 1):
-        progress_counter(i, total, "CLIP embedding")
+        progress_counter(i, total, f"CLIP embedding ({device_label})")
         try:
             embedding = embed_image(poster_path)
             embedding_list = embedding.tolist()

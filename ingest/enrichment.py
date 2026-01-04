@@ -13,7 +13,7 @@ from clip_embed import embed_scenes_for_file
 from whisper_transcribe import transcribe_video
 from transcript_embed import embed_transcripts_for_file
 from face_detect import detect_faces_for_file
-from scanner import get_config, get_video_metadata
+from scanner import get_config, get_video_metadata, get_watch_folders
 
 
 def get_enabled_models():
@@ -251,24 +251,48 @@ def process_file(file_id, video_path, job_id=None):
     print("  ✅ Done")
 
 
+def get_accessible_watch_folders():
+    """
+    Get list of watch folders that are currently accessible.
+    Used to avoid marking files as failed when their parent folder is just unmounted.
+    """
+    watch_folders = get_watch_folders()
+    return [f for f in watch_folders if os.path.isdir(f)]
+
+
+def is_in_accessible_folder(video_path, accessible_folders):
+    """Check if a video path is under an accessible watch folder."""
+    return any(video_path.startswith(folder) for folder in accessible_folders)
+
+
 def run_enrichment():
     """Process all pending enrichment jobs."""
     jobs = get_pending_jobs()
-    
+
     if not jobs:
         return 0
-    
+
     models = get_enabled_models()
     total_stages = get_total_stages(models)
-    
+
+    # Determine which watch folders are accessible
+    accessible_folders = get_accessible_watch_folders()
+
     processed = 0
+    skipped_unmounted = 0
     for job_id, file_id, video_path in jobs:
-        # Check if file still exists
+        # Check if file's watch folder is accessible
+        if not is_in_accessible_folder(video_path, accessible_folders):
+            # Watch folder is unmounted - skip without marking failed
+            skipped_unmounted += 1
+            continue
+
+        # Watch folder is accessible but file is missing - this is a real problem
         if not os.path.exists(video_path):
             print(f"    ⚠️  File not found: {video_path}")
             mark_job_failed(job_id, "File not found")
             continue
-            
+
         mark_job_processing(job_id, total_stages)
         
         try:
@@ -278,5 +302,8 @@ def run_enrichment():
         except Exception as e:
             print(f"    ❌ Error: {e}")
             mark_job_failed(job_id, str(e))
-    
+
+    if skipped_unmounted > 0:
+        print(f"  ⏸️  Skipped {skipped_unmounted} files in unmounted watch folders")
+
     return processed

@@ -60,6 +60,10 @@ Multiple folders can be comma-separated. These paths must be accessible inside t
 docker compose up -d
 ```
 
+> **Build time:** First build takes **10-15 minutes** to download and install PyTorch, transformers, and other ML libraries (~2GB). Subsequent builds use Docker's cache and complete in seconds.
+>
+> **First run:** When you process your first video, ML models (~1GB total) download automatically: CLIP for visual search, Whisper for transcription, ArcFace for faces. This adds ~2-3 minutes on first use, then models are cached.
+
 ### 4. Start Searching
 
 Open **http://localhost:8080**. The ingest service will automatically scan and enrich your videos. Search results appear as files are processed.
@@ -206,6 +210,14 @@ docker exec fennec-db psql -U fennec -c \
 ### Out of memory during enrichment
 
 Models run on CPU by default. For large files, you may need to increase Docker's memory limit or process files in smaller batches.
+
+---
+
+## Known Limitations
+
+### Browser Video Playback
+
+Scene previews may briefly flash frames from adjacent scenes when seeking or at scene boundaries. This is a limitation of HTML5 video—browsers display the nearest keyframe while decoding the requested frame. For frame-accurate review, export clips to an NLE.
 
 ---
 

@@ -5,9 +5,10 @@ FastAPI backend for video search with CLIP, Whisper, and face filtering
 
 import os
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional, List, Any
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -15,7 +16,30 @@ import numpy as np
 
 from db import fetch_one, fetch_all, execute
 
-app = FastAPI(title="Fennec API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown events."""
+    import asyncio
+
+    async def warmup_models():
+        """Preload models in background so first search is fast."""
+        import concurrent.futures
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            # Load both models in parallel (they're CPU-bound)
+            await asyncio.gather(
+                loop.run_in_executor(pool, get_clip_model),
+                loop.run_in_executor(pool, get_sentence_model),
+            )
+        print("✓ Models preloaded and ready")
+
+    # Start warmup in background (non-blocking)
+    asyncio.create_task(warmup_models())
+    yield
+
+
+app = FastAPI(title="Fennec API", version="0.1.0", lifespan=lifespan)
 
 # CORS for local development
 app.add_middleware(
@@ -26,10 +50,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def log_visits(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path in ("/api/search", "/api/scenes", "/"):
+        ip = request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.client.host
+        print(f"👀 VISIT: {ip} - {request.url.path}")
+    return response
+
+
 POSTERS_DIR = os.environ.get('POSTERS_DIR', '/app/posters')
 
-# Root paths available for browsing (must match docker-compose mounts)
-BROWSE_ROOTS = ['/Users', '/Volumes', '/home', '/mnt', '/media']
+# Model status tracking (set to True when loaded)
+_clip_loaded = False
+_sentence_loaded = False
 
 # Load CLIP model lazily
 _clip_model = None
@@ -37,7 +72,7 @@ _clip_tokenizer = None
 
 def get_clip_model():
     """Lazy load CLIP model for text embedding."""
-    global _clip_model, _clip_tokenizer
+    global _clip_model, _clip_tokenizer, _clip_loaded
     if _clip_model is None:
         try:
             import open_clip
@@ -46,6 +81,7 @@ def get_clip_model():
             )
             _clip_tokenizer = open_clip.get_tokenizer('ViT-B-32')
             _clip_model.eval()
+            _clip_loaded = True
         except Exception as e:
             print(f"Warning: Could not load CLIP model: {e}")
             return None, None
@@ -57,7 +93,7 @@ def embed_text(text: str) -> Optional[List[float]]:
     model, tokenizer = get_clip_model()
     if model is None:
         return None
-    
+
     with torch.no_grad():
         tokens = tokenizer([text])
         embedding = model.encode_text(tokens)
@@ -70,11 +106,12 @@ _sentence_model = None
 
 def get_sentence_model():
     """Lazy load sentence-transformer model for transcript embedding."""
-    global _sentence_model
+    global _sentence_model, _sentence_loaded
     if _sentence_model is None:
         try:
             from sentence_transformers import SentenceTransformer
             _sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+            _sentence_loaded = True
         except Exception as e:
             print(f"Warning: Could not load sentence-transformer model: {e}")
             return None
@@ -120,6 +157,33 @@ class ConfigValue(BaseModel):
     value: Any
 
 
+class EDLSceneItem(BaseModel):
+    sceneId: int
+    inTc: float  # seconds
+    outTc: float  # seconds
+
+
+class EDLExportRequest(BaseModel):
+    scenes: List[EDLSceneItem]
+    title: Optional[str] = "Fennec Export"
+
+
+# ============ Status ============
+
+@app.get("/api/ready")
+async def get_ready_status():
+    """Check server readiness - models and indexer state."""
+    indexer_row = fetch_one("SELECT value FROM config WHERE key = 'indexer_state'")
+    indexer_state = indexer_row['value'] if indexer_row else 'offline'
+
+    return {
+        "models_ready": _clip_loaded and _sentence_loaded,
+        "clip_loaded": _clip_loaded,
+        "sentence_loaded": _sentence_loaded,
+        "indexer_state": indexer_state,
+    }
+
+
 # ============ Scenes Browse ============
 
 @app.get("/api/scenes")
@@ -127,9 +191,9 @@ async def list_scenes(
     limit: int = Query(40, le=200),
     offset: int = Query(0, ge=0)
 ):
-    """Browse scenes with pagination."""
+    """Browse scenes with pagination. Only shows scenes from completed files."""
     scenes = fetch_all("""
-        SELECT 
+        SELECT
             s.id,
             s.scene_index,
             s.start_tc as start_time,
@@ -150,12 +214,24 @@ async def list_scenes(
         FROM scenes s
         JOIN files f ON s.file_id = f.id
         WHERE f.deleted_at IS NULL
-        ORDER BY s.scene_index
+        AND EXISTS (
+            SELECT 1 FROM enrichment_queue eq
+            WHERE eq.file_id = f.id AND eq.status = 'complete'
+        )
+        ORDER BY f.filename, s.scene_index
         LIMIT %s OFFSET %s
     """, (limit, offset))
-    
-    # Get total count
-    total = fetch_one("SELECT COUNT(*) as count FROM scenes s JOIN files f ON s.file_id = f.id WHERE f.deleted_at IS NULL")
+
+    # Get total count (only completed files)
+    total = fetch_one("""
+        SELECT COUNT(*) as count FROM scenes s
+        JOIN files f ON s.file_id = f.id
+        WHERE f.deleted_at IS NULL
+        AND EXISTS (
+            SELECT 1 FROM enrichment_queue eq
+            WHERE eq.file_id = f.id AND eq.status = 'complete'
+        )
+    """)
     
     # Add faces to each scene
     for scene in scenes:
@@ -168,7 +244,7 @@ async def list_scenes(
             {'id': f['id'], 'bbox': [f['bbox_x'], f['bbox_y'], f['bbox_w'], f['bbox_h']]}
             for f in faces
         ]
-    
+
     return {"scenes": scenes, "total": total['count'] if total else 0}
 
 
@@ -202,7 +278,7 @@ async def get_scene(scene_index: int):
     if not scene:
         raise HTTPException(status_code=404, detail="Scene not found")
     
-    # Get faces
+    # Get faces for overlay display
     faces = fetch_all("""
         SELECT id, bbox_x, bbox_y, bbox_w, bbox_h
         FROM faces
@@ -212,7 +288,7 @@ async def get_scene(scene_index: int):
         {'id': f['id'], 'bbox': [f['bbox_x'], f['bbox_y'], f['bbox_w'], f['bbox_h']]}
         for f in faces
     ]
-    
+
     # Get embeddings for this scene
     embeddings = fetch_all("""
         SELECT model_name, model_version, dimension
@@ -236,11 +312,9 @@ async def search(
     transcript: Optional[str] = Query(None, description="Search in transcripts (exact substring match)"),
     transcript_semantic: Optional[str] = Query(None, description="Semantic transcript search (finds synonyms, numbers as words, etc.)"),
     transcript_threshold: Optional[float] = Query(None, description="Minimum transcript semantic similarity (uses config default if not specified)"),
-    face_scene: Optional[int] = Query(None, description="Scene index for face filter"),
-    face_index: Optional[int] = Query(None, description="Face index within scene"),
-    face_id: Optional[int] = Query(None, description="Face ID for direct face filter (from face browser)"),
+    face_id: Optional[int] = Query(None, description="Face ID for face filter"),
     face_threshold: Optional[float] = Query(None, description="Minimum face similarity (uses config default if not specified)"),
-    visual_match_scene: Optional[int] = Query(None, description="Scene index for visual match"),
+    visual_match_scene_id: Optional[int] = Query(None, description="Scene ID for visual match"),
     visual_match_threshold: Optional[float] = Query(None, description="Minimum visual match similarity (uses config default if not specified)"),
     tc_min: Optional[float] = Query(None, description="Minimum timecode in seconds"),
     tc_max: Optional[float] = Query(None, description="Maximum timecode in seconds"),
@@ -275,8 +349,9 @@ async def search(
         transcript_threshold = config_thresholds['transcript']
     
     # Start with all scenes (join embeddings for CLIP vectors)
+    # Only show scenes from files that have completed enrichment
     base_query = """
-        SELECT 
+        SELECT
             s.id,
             s.scene_index,
             s.start_tc as start_time,
@@ -299,6 +374,10 @@ async def search(
         JOIN files f ON s.file_id = f.id
         LEFT JOIN embeddings e ON s.id = e.scene_id AND e.model_name = 'clip'
         WHERE f.deleted_at IS NULL
+        AND EXISTS (
+            SELECT 1 FROM enrichment_queue eq
+            WHERE eq.file_id = f.id AND eq.status = 'complete'
+        )
     """
     params = []
     
@@ -355,7 +434,7 @@ async def search(
         base_query += " AND f.codec ILIKE %s"
         params.append(f'%{codec}%')
     
-    base_query += " ORDER BY s.scene_index"
+    base_query += " ORDER BY f.filename, s.scene_index"
     
     # Fetch base results
     scenes = fetch_all(base_query, tuple(params) if params else None)
@@ -383,13 +462,13 @@ async def search(
         results = scenes
     
     # Visual match filter (find scenes similar to reference scene)
-    if visual_match_scene is not None:
+    if visual_match_scene_id is not None:
         ref_scene = fetch_one("""
-            SELECT e.embedding as clip_embedding 
+            SELECT e.embedding as clip_embedding
             FROM scenes s
             JOIN embeddings e ON s.id = e.scene_id AND e.model_name = 'clip'
-            WHERE s.scene_index = %s
-        """, (visual_match_scene,))
+            WHERE s.id = %s
+        """, (visual_match_scene_id,))
         
         if ref_scene and ref_scene.get('clip_embedding') is not None:
             ref_emb = ref_scene['clip_embedding']
@@ -405,29 +484,16 @@ async def search(
             filtered.sort(key=lambda x: x.get('similarity', 0), reverse=True)
             results = filtered
     
-    # Face filter - support both face_id (direct) and face_scene+face_index (from clicking results)
+    # Face filter - lookup by unique face ID
     ref_emb = None
-    
+
     if face_id is not None:
-        # Direct face lookup by ID
         ref_face = fetch_one("""
             SELECT embedding FROM faces WHERE id = %s
         """, (face_id,))
         if ref_face and ref_face.get('embedding') is not None:
             ref_emb = ref_face['embedding']
-    elif face_scene is not None and face_index is not None:
-        # Get reference face embedding by scene index and face position
-        ref_face = fetch_one("""
-            SELECT fa.embedding
-            FROM faces fa
-            JOIN scenes s ON fa.scene_id = s.id
-            WHERE s.scene_index = %s
-            ORDER BY fa.id
-            LIMIT 1 OFFSET %s
-        """, (face_scene, face_index))
-        if ref_face and ref_face.get('embedding') is not None:
-            ref_emb = ref_face['embedding']
-    
+
     if ref_emb is not None:
         scene_ids = [s['id'] for s in results]
         
@@ -506,7 +572,7 @@ async def search(
         ]
         # Remove embedding from response
         scene.pop('clip_embedding', None)
-    
+
     return {"results": results[:limit]}
 
 
@@ -547,7 +613,11 @@ async def get_thumbnail(scene_id: str):
     elif poster_path.endswith('.png'):
         media_type = "image/png"
     
-    return FileResponse(poster_path, media_type=media_type)
+    return FileResponse(
+        poster_path,
+        media_type=media_type,
+        headers={"Cache-Control": "no-cache, must-revalidate"}
+    )
 
 
 # ============ Video Streaming ============
@@ -587,20 +657,38 @@ async def serve_video(file_id: int):
 @app.get("/api/files")
 async def list_files(
     limit: int = Query(50, le=500),
-    offset: int = 0
+    offset: int = 0,
+    completed: bool = Query(True, description="Only show files with completed processing")
 ):
     """List indexed files (shots)."""
-    files = fetch_all("""
-        SELECT id, path, filename, duration_seconds, width, height, 
-               fps, codec, audio_tracks, file_size_bytes,
-               file_created_at, file_modified_at, parent_folder,
-               indexed_at, created_at
-        FROM files 
-        WHERE deleted_at IS NULL
-        ORDER BY indexed_at DESC
-        LIMIT %s OFFSET %s
-    """, (limit, offset))
-    
+    if completed:
+        # Only show files that have completed enrichment
+        files = fetch_all("""
+            SELECT f.id, f.path, f.filename, f.duration_seconds, f.width, f.height,
+                   f.fps, f.codec, f.audio_tracks, f.file_size_bytes,
+                   f.file_created_at, f.file_modified_at, f.parent_folder,
+                   f.indexed_at, f.created_at
+            FROM files f
+            WHERE f.deleted_at IS NULL
+            AND EXISTS (
+                SELECT 1 FROM enrichment_queue eq
+                WHERE eq.file_id = f.id AND eq.status = 'complete'
+            )
+            ORDER BY f.indexed_at DESC
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+    else:
+        files = fetch_all("""
+            SELECT id, path, filename, duration_seconds, width, height,
+                   fps, codec, audio_tracks, file_size_bytes,
+                   file_created_at, file_modified_at, parent_folder,
+                   indexed_at, created_at
+            FROM files
+            WHERE deleted_at IS NULL
+            ORDER BY indexed_at DESC NULLS LAST
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+
     return {"files": files}
 
 
@@ -635,15 +723,14 @@ async def get_file(file_id: int):
 async def get_stats():
     """Get index statistics."""
     stats = fetch_one("""
-        SELECT 
+        SELECT
             (SELECT COUNT(*) FROM files WHERE deleted_at IS NULL) as files,
             (SELECT COALESCE(SUM(duration_seconds), 0) FROM files WHERE deleted_at IS NULL) as total_duration,
             (SELECT COUNT(*) FROM scenes) as scenes,
             (SELECT COUNT(*) FROM faces) as faces,
-            (SELECT COUNT(DISTINCT cluster_id) FROM faces WHERE cluster_id IS NOT NULL) as unique_faces,
             (SELECT COUNT(DISTINCT scene_id) FROM faces) as faces_complete
     """)
-    
+
     return stats
 
 
@@ -732,260 +819,26 @@ async def get_vector_stats():
 
 @app.get("/api/faces")
 async def list_faces(limit: int = Query(50, le=200)):
-    """List face clusters with counts."""
+    """List faces with scene info."""
     faces = fetch_all("""
-        SELECT cluster_id, COUNT(*) as count
-        FROM faces
-        WHERE cluster_id IS NOT NULL
-        GROUP BY cluster_id
-        ORDER BY count DESC
+        SELECT f.id, f.scene_id, s.scene_index, fi.filename
+        FROM faces f
+        JOIN scenes s ON f.scene_id = s.id
+        JOIN files fi ON s.file_id = fi.id
+        ORDER BY f.id DESC
         LIMIT %s
     """, (limit,))
-    
+
     return {"faces": faces}
-
-
-@app.get("/api/faces/browse")
-async def browse_faces(
-    scene_ids: Optional[str] = Query(None, description="Comma-separated scene IDs to filter by")
-):
-    """
-    Get faces grouped by cluster for face browser modal.
-    Optionally filter to only faces in specified scenes.
-    When filtered, returns one representative face per cluster (most representative).
-    """
-    # Parse scene_ids if provided
-    scene_id_list = None
-    if scene_ids:
-        scene_id_list = [int(x) for x in scene_ids.split(',') if x.strip()]
-
-    if scene_id_list:
-        # Filtered mode: get clusters present in the filtered scenes
-        placeholders = ','.join(['%s'] * len(scene_id_list))
-
-        clusters = fetch_all(f"""
-            SELECT
-                cluster_id,
-                COUNT(*) as count
-            FROM faces
-            WHERE cluster_id IS NOT NULL AND cluster_id >= 0
-            AND scene_id IN ({placeholders})
-            GROUP BY cluster_id
-            ORDER BY count DESC
-        """, tuple(scene_id_list))
-
-        unclustered = fetch_one(f"""
-            SELECT COUNT(*) as count FROM faces
-            WHERE (cluster_id IS NULL OR cluster_id = -1)
-            AND scene_id IN ({placeholders})
-        """, tuple(scene_id_list))
-        unclustered_count = unclustered['count'] if unclustered else 0
-
-        # Get one representative face per cluster (lowest cluster_order)
-        faces = fetch_all(f"""
-            SELECT DISTINCT ON (COALESCE(f.cluster_id, -1))
-                f.id,
-                f.scene_id,
-                f.cluster_id,
-                f.cluster_order,
-                f.bbox_x,
-                f.bbox_y,
-                f.bbox_w,
-                f.bbox_h,
-                s.scene_index,
-                s.poster_frame_path
-            FROM faces f
-            JOIN scenes s ON f.scene_id = s.id
-            WHERE f.scene_id IN ({placeholders})
-            ORDER BY COALESCE(f.cluster_id, -1), f.cluster_order
-        """, tuple(scene_id_list))
-    else:
-        # Unfiltered mode: return all faces
-        clusters = fetch_all("""
-            SELECT
-                cluster_id,
-                COUNT(*) as count
-            FROM faces
-            WHERE cluster_id IS NOT NULL AND cluster_id >= 0
-            GROUP BY cluster_id
-            ORDER BY count DESC
-        """)
-
-        unclustered = fetch_one("""
-            SELECT COUNT(*) as count FROM faces WHERE cluster_id IS NULL OR cluster_id = -1
-        """)
-        unclustered_count = unclustered['count'] if unclustered else 0
-
-        faces = fetch_all("""
-            SELECT
-                f.id,
-                f.scene_id,
-                f.cluster_id,
-                f.cluster_order,
-                f.bbox_x,
-                f.bbox_y,
-                f.bbox_w,
-                f.bbox_h,
-                s.scene_index,
-                s.poster_frame_path
-            FROM faces f
-            JOIN scenes s ON f.scene_id = s.id
-            ORDER BY
-                CASE WHEN f.cluster_id IS NULL OR f.cluster_id = -1 THEN 1 ELSE 0 END,
-                f.cluster_id,
-                f.cluster_order
-        """)
-
-    return {
-        "clusters": [
-            {"id": c['cluster_id'], "count": c['count']}
-            for c in clusters
-        ],
-        "unclustered_count": unclustered_count,
-        "faces": [
-            {
-                "id": f['id'],
-                "scene_id": f['scene_id'],
-                "scene_index": f['scene_index'],
-                "cluster_id": f['cluster_id'],
-                "bbox": [f['bbox_x'], f['bbox_y'], f['bbox_w'], f['bbox_h']],
-                "poster_path": f['poster_frame_path']
-            }
-            for f in faces
-        ],
-        "filtered": scene_id_list is not None
-    }
-
-
-@app.get("/api/scenes/browse")
-async def browse_scenes(
-    scene_ids: Optional[str] = Query(None, description="Comma-separated scene IDs to filter by")
-):
-    """
-    Get scenes grouped by CLIP cluster for visual match browser.
-    Optionally filter to specified scenes.
-    Returns one representative scene per cluster (most representative).
-    """
-    # Parse scene_ids if provided
-    scene_id_list = None
-    if scene_ids:
-        scene_id_list = [int(x) for x in scene_ids.split(',') if x.strip()]
-
-    if scene_id_list:
-        # Filtered mode: get clusters present in the filtered scenes
-        placeholders = ','.join(['%s'] * len(scene_id_list))
-
-        clusters = fetch_all(f"""
-            SELECT
-                clip_cluster_id as cluster_id,
-                COUNT(*) as count
-            FROM scenes s
-            JOIN files f ON s.file_id = f.id
-            WHERE clip_cluster_id IS NOT NULL AND clip_cluster_id >= 0
-            AND f.deleted_at IS NULL
-            AND s.id IN ({placeholders})
-            GROUP BY clip_cluster_id
-            ORDER BY count DESC
-        """, tuple(scene_id_list))
-
-        unclustered = fetch_one(f"""
-            SELECT COUNT(*) as count FROM scenes s
-            JOIN files f ON s.file_id = f.id
-            WHERE (clip_cluster_id IS NULL OR clip_cluster_id = -1)
-            AND f.deleted_at IS NULL
-            AND s.id IN ({placeholders})
-        """, tuple(scene_id_list))
-        unclustered_count = unclustered['count'] if unclustered else 0
-
-        # Get one representative scene per cluster (lowest clip_cluster_order)
-        scenes = fetch_all(f"""
-            SELECT DISTINCT ON (COALESCE(s.clip_cluster_id, -1))
-                s.id,
-                s.scene_index,
-                s.clip_cluster_id as cluster_id,
-                s.clip_cluster_order,
-                s.start_tc,
-                s.end_tc,
-                s.poster_frame_path,
-                f.id as file_id,
-                f.filename
-            FROM scenes s
-            JOIN files f ON s.file_id = f.id
-            WHERE f.deleted_at IS NULL
-            AND s.id IN ({placeholders})
-            ORDER BY COALESCE(s.clip_cluster_id, -1), s.clip_cluster_order
-        """, tuple(scene_id_list))
-    else:
-        # Unfiltered mode: return all scenes (one per cluster)
-        clusters = fetch_all("""
-            SELECT
-                clip_cluster_id as cluster_id,
-                COUNT(*) as count
-            FROM scenes s
-            JOIN files f ON s.file_id = f.id
-            WHERE clip_cluster_id IS NOT NULL AND clip_cluster_id >= 0
-            AND f.deleted_at IS NULL
-            GROUP BY clip_cluster_id
-            ORDER BY count DESC
-        """)
-
-        unclustered = fetch_one("""
-            SELECT COUNT(*) as count FROM scenes s
-            JOIN files f ON s.file_id = f.id
-            WHERE (clip_cluster_id IS NULL OR clip_cluster_id = -1)
-            AND f.deleted_at IS NULL
-        """)
-        unclustered_count = unclustered['count'] if unclustered else 0
-
-        # Get one representative scene per cluster
-        scenes = fetch_all("""
-            SELECT DISTINCT ON (COALESCE(s.clip_cluster_id, -1))
-                s.id,
-                s.scene_index,
-                s.clip_cluster_id as cluster_id,
-                s.clip_cluster_order,
-                s.start_tc,
-                s.end_tc,
-                s.poster_frame_path,
-                f.id as file_id,
-                f.filename
-            FROM scenes s
-            JOIN files f ON s.file_id = f.id
-            WHERE f.deleted_at IS NULL
-            ORDER BY COALESCE(s.clip_cluster_id, -1), s.clip_cluster_order
-        """)
-
-    return {
-        "clusters": [
-            {"id": c['cluster_id'], "count": c['count']}
-            for c in clusters
-        ],
-        "unclustered_count": unclustered_count,
-        "scenes": [
-            {
-                "id": s['id'],
-                "scene_index": s['scene_index'],
-                "cluster_id": s['cluster_id'],
-                "start_time": s['start_tc'],
-                "end_time": s['end_tc'],
-                "poster_path": s['poster_frame_path'],
-                "file_id": s['file_id'],
-                "filename": s['filename']
-            }
-            for s in scenes
-        ],
-        "filtered": scene_id_list is not None
-    }
 
 
 @app.get("/api/faces/{face_id}")
 async def get_face(face_id: int):
     """Get a single face with its scene and file info."""
     face = fetch_one("""
-        SELECT 
+        SELECT
             f.id,
             f.scene_id,
-            f.cluster_id,
             f.bbox_x,
             f.bbox_y,
             f.bbox_w,
@@ -1002,15 +855,14 @@ async def get_face(face_id: int):
         JOIN files fi ON s.file_id = fi.id
         WHERE f.id = %s
     """, (face_id,))
-    
+
     if not face:
         raise HTTPException(status_code=404, detail="Face not found")
-    
+
     return {
         "id": face['id'],
         "scene_id": face['scene_id'],
         "scene_index": face['scene_index'],
-        "cluster_id": face['cluster_id'],
         "bbox": [face['bbox_x'], face['bbox_y'], face['bbox_w'], face['bbox_h']],
         "poster_path": face['poster_frame_path'],
         "start_tc": face['start_tc'],
@@ -1111,6 +963,122 @@ async def set_config(key: str, body: ConfigValue):
     return {"success": True, "key": key, "value": body.value}
 
 
+# ============ Watch Folders ============
+
+@app.get("/api/watch-folders")
+async def get_watch_folders():
+    """
+    Get watch folders with accessibility status.
+    Returns each folder with whether it's currently accessible.
+    """
+    row = fetch_one("SELECT value FROM config WHERE key = 'watch_folders'")
+    folders = row['value'] if row and row.get('value') else []
+
+    result = []
+    for folder in folders:
+        result.append({
+            "path": folder,
+            "accessible": os.path.isdir(folder)
+        })
+
+    return {"folders": result}
+
+
+# ============ EDL Export ============
+
+def seconds_to_smpte(seconds: float, fps: float = 29.97) -> str:
+    """Convert seconds to SMPTE timecode (HH:MM:SS:FF)."""
+    total_frames = int(round(seconds * fps))
+    frames = total_frames % int(round(fps))
+    total_seconds = total_frames // int(round(fps))
+    secs = total_seconds % 60
+    total_minutes = total_seconds // 60
+    mins = total_minutes % 60
+    hours = total_minutes // 60
+    return f"{hours:02d}:{mins:02d}:{secs:02d}:{frames:02d}"
+
+
+@app.post("/api/export/edl")
+async def export_edl(body: EDLExportRequest):
+    """
+    Export scenes as CMX 3600 EDL file.
+    Accepts scene IDs with optional TC overrides.
+    """
+    from fastapi.responses import Response
+
+    if not body.scenes:
+        raise HTTPException(status_code=400, detail="No scenes provided")
+
+    # Get scene info from database
+    scene_ids = [s.sceneId for s in body.scenes]
+    placeholders = ','.join(['%s'] * len(scene_ids))
+
+    db_scenes = fetch_all(f"""
+        SELECT
+            s.id,
+            s.start_tc,
+            s.end_tc,
+            f.filename,
+            f.path,
+            f.fps
+        FROM scenes s
+        JOIN files f ON s.file_id = f.id
+        WHERE s.id IN ({placeholders})
+    """, tuple(scene_ids))
+
+    # Build lookup by scene ID
+    scene_lookup = {s['id']: s for s in db_scenes}
+
+    # Generate EDL content
+    lines = [
+        f"TITLE: {body.title}",
+        "FCM: NON-DROP FRAME",
+        ""
+    ]
+
+    record_in = 0.0  # Running record position
+
+    for idx, item in enumerate(body.scenes, start=1):
+        db_scene = scene_lookup.get(item.sceneId)
+        if not db_scene:
+            continue
+
+        fps = db_scene['fps'] or 29.97
+        filename = db_scene['filename']
+
+        # Use provided TC or fall back to scene TC
+        src_in = item.inTc
+        src_out = item.outTc
+        duration = src_out - src_in
+
+        # Calculate record out
+        record_out = record_in + duration
+
+        # Format timecodes
+        src_in_tc = seconds_to_smpte(src_in, fps)
+        src_out_tc = seconds_to_smpte(src_out, fps)
+        rec_in_tc = seconds_to_smpte(record_in, fps)
+        rec_out_tc = seconds_to_smpte(record_out, fps)
+
+        # EDL event line: event# reel channel transition src_in src_out rec_in rec_out
+        lines.append(f"{idx:03d}  AX       V     C        {src_in_tc} {src_out_tc} {rec_in_tc} {rec_out_tc}")
+        lines.append(f"* FROM CLIP NAME: {filename}")
+        lines.append("")
+
+        record_in = record_out
+
+    edl_content = "\n".join(lines)
+
+    # Return as downloadable file
+    return Response(
+        content=edl_content,
+        media_type="text/plain",
+        headers={
+            "Content-Disposition": f'attachment; filename="{body.title}.edl"'
+        }
+    )
+
+
 # ============ Health ============
 
 @app.get("/api/health")
@@ -1124,3 +1092,133 @@ async def health():
             status_code=503,
             content={"status": "unhealthy", "database": str(e)}
         )
+
+
+# ============ Admin ============
+
+DEMO_MODE = os.environ.get('DEMO_MODE', 'false').lower() == 'true'
+
+
+@app.get("/api/admin/status")
+async def admin_status():
+    """Get admin status including demo mode flag."""
+    return {
+        "demo_mode": DEMO_MODE,
+        "admin_enabled": not DEMO_MODE
+    }
+
+
+@app.post("/api/admin/reset-failed-jobs")
+async def reset_failed_jobs():
+    """Reset all failed enrichment jobs to pending status."""
+    if DEMO_MODE:
+        raise HTTPException(status_code=403, detail="Admin actions disabled in demo mode")
+
+    result = execute(
+        "UPDATE enrichment_queue SET status = 'pending', error = NULL WHERE status = 'failed'"
+    )
+    count = result.rowcount if hasattr(result, 'rowcount') else 0
+    return {"success": True, "reset_count": count}
+
+
+@app.post("/api/admin/reset-processing-jobs")
+async def reset_processing_jobs():
+    """Reset stuck processing jobs to pending status."""
+    if DEMO_MODE:
+        raise HTTPException(status_code=403, detail="Admin actions disabled in demo mode")
+
+    result = execute(
+        "UPDATE enrichment_queue SET status = 'pending', started_at = NULL WHERE status = 'processing'"
+    )
+    count = result.rowcount if hasattr(result, 'rowcount') else 0
+    return {"success": True, "reset_count": count}
+
+
+@app.post("/api/admin/purge-deleted")
+async def purge_deleted_files():
+    """Permanently remove soft-deleted files and their data."""
+    if DEMO_MODE:
+        raise HTTPException(status_code=403, detail="Admin actions disabled in demo mode")
+
+    # Count first
+    count_row = fetch_one("SELECT COUNT(*) as count FROM files WHERE deleted_at IS NOT NULL")
+    count = count_row['count'] if count_row else 0
+
+    # Delete (cascades to scenes, faces, embeddings, queue)
+    execute("DELETE FROM files WHERE deleted_at IS NOT NULL")
+
+    return {"success": True, "purged_count": count}
+
+
+@app.post("/api/admin/purge-orphans")
+async def purge_orphan_files():
+    """Remove files not under any current watch folder."""
+    if DEMO_MODE:
+        raise HTTPException(status_code=403, detail="Admin actions disabled in demo mode")
+
+    # Get current watch folders
+    row = fetch_one("SELECT value FROM config WHERE key = 'watch_folders'")
+    watch_folders = row['value'] if row and row.get('value') else []
+
+    if not watch_folders:
+        return {"success": True, "purged_count": 0, "message": "No watch folders configured"}
+
+    # Build condition to find files NOT in any watch folder
+    conditions = " AND ".join([f"path NOT LIKE %s" for _ in watch_folders])
+    params = [f"{folder}%" for folder in watch_folders]
+
+    # Count orphans
+    count_row = fetch_one(
+        f"SELECT COUNT(*) as count FROM files WHERE {conditions}",
+        tuple(params)
+    )
+    count = count_row['count'] if count_row else 0
+
+    if count > 0:
+        execute(f"DELETE FROM files WHERE {conditions}", tuple(params))
+
+    return {"success": True, "purged_count": count}
+
+
+@app.delete("/api/admin/database")
+async def wipe_database():
+    """Wipe all indexed data. Dangerous!"""
+    if DEMO_MODE:
+        raise HTTPException(status_code=403, detail="Admin actions disabled in demo mode")
+
+    # Get counts before wiping
+    files_count = fetch_one("SELECT COUNT(*) as count FROM files")['count']
+    scenes_count = fetch_one("SELECT COUNT(*) as count FROM scenes")['count']
+    faces_count = fetch_one("SELECT COUNT(*) as count FROM faces")['count']
+
+    # Truncate all data tables (preserves config)
+    execute("TRUNCATE files, scenes, faces, enrichment_queue, embeddings RESTART IDENTITY CASCADE")
+
+    return {
+        "success": True,
+        "wiped": {
+            "files": files_count,
+            "scenes": scenes_count,
+            "faces": faces_count
+        }
+    }
+
+
+@app.post("/api/admin/restart-server")
+async def restart_server():
+    """
+    Restart the server process to refresh media mount points.
+    Used when external drives are remounted.
+    """
+    if DEMO_MODE:
+        raise HTTPException(status_code=403, detail="Admin actions disabled in demo mode")
+
+    import sys
+    import asyncio
+
+    async def delayed_exit():
+        await asyncio.sleep(0.5)  # Give time for response to be sent
+        sys.exit(0)  # Exit cleanly; Docker will restart the container
+
+    asyncio.create_task(delayed_exit())
+    return {"success": True, "message": "Server restarting..."}

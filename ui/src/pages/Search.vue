@@ -1,20 +1,23 @@
 <template>
-  <div class="max-w-7xl mx-auto px-4 py-6">
+  <div class="max-w-7xl mx-auto px-4 py-4">
     <!-- Page title -->
-    <div class="mb-6">
-      <h1 class="text-2xl font-semibold tracking-wide">Search</h1>
-      <p class="text-gray-500 text-sm mt-1">
+    <div class="mb-4">
+      <h1 class="text-lg font-semibold tracking-wide">Search</h1>
+      <p class="text-gray-500 text-xs mt-0.5">
         Search shots by visual content, dialog, faces, and metadata
       </p>
     </div>
 
     <!-- Search Panel -->
-    <div class="bg-[#171717] rounded-lg p-4 mb-6">
-      <div class="flex flex-wrap gap-4">
+    <div class="bg-[#171717] rounded-sm p-3 mb-4 border border-[#2a2a2a]">
+      <div class="flex flex-wrap gap-3">
         <!-- Visual Content -->
         <div class="control-group flex-1 min-w-[280px]">
           <label class="control-label">
-            <span>Visual Content</span>
+            <span class="flex items-center gap-1.5">
+              <span class="category-swatch category-swatch-visual"></span>
+              Visual Content
+            </span>
             <span class="flex items-center gap-1">
               <span class="text-gray-500 text-xs normal-case">min</span>
               <input 
@@ -25,24 +28,41 @@
               />
             </span>
           </label>
-          <input 
+          <input
             type="text"
             v-model="filters.visual"
-            placeholder="robot, explosion, outdoor scene..."
+            :placeholder="serverStatus.clipLoaded ? 'robot, explosion, outdoor scene...' : 'Loading CLIP model...'"
+            :disabled="!serverStatus.clipLoaded"
             class="input-field"
+            :class="{ 'opacity-50 cursor-not-allowed': !serverStatus.clipLoaded }"
             @input="debouncedSearch"
           />
-          <!-- Color swatches -->
-          <div class="color-scroll mt-2">
-            <div class="flex gap-1.5">
-              <button 
-                v-for="color in colorSwatches" 
-                :key="color.term"
-                @click="addColorTerm(color.term)"
-                class="w-6 h-5 rounded flex-shrink-0 hover:ring-2 hover:ring-white transition"
-                :class="color.class"
-                :title="color.label"
-              ></button>
+          <!-- Color swatches toggle -->
+          <div class="mt-1">
+            <button
+              @click="showColorSwatches = !showColorSwatches"
+              class="flex items-center gap-1 text-[10px] text-gray-500 hover:text-gray-300 transition"
+            >
+              <svg
+                class="w-3 h-3 transition-transform"
+                :class="showColorSwatches ? 'rotate-90' : ''"
+                fill="none" stroke="currentColor" viewBox="0 0 24 24"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+              </svg>
+              <span>colors</span>
+            </button>
+            <div v-show="showColorSwatches" class="color-scroll mt-1">
+              <div class="flex gap-1">
+                <button
+                  v-for="color in colorSwatches"
+                  :key="color.term"
+                  @click="addColorTerm(color.term)"
+                  class="w-5 h-4 rounded-sm flex-shrink-0 hover:ring-1 hover:ring-white transition"
+                  :class="color.class"
+                  :title="color.label"
+                ></button>
+              </div>
             </div>
           </div>
         </div>
@@ -50,7 +70,10 @@
         <!-- Dialog -->
         <div class="control-group min-w-[200px]">
           <label class="control-label">
-            <span>Dialog</span>
+            <span class="flex items-center gap-1.5">
+              <span class="category-swatch category-swatch-dialog"></span>
+              Dialog
+            </span>
             <span v-if="dialogSearchMode === 'semantic'" class="flex items-center gap-1">
               <span class="text-gray-500 text-xs normal-case">min</span>
               <input 
@@ -69,54 +92,71 @@
             @input="debouncedSearch"
           />
           <!-- Search mode toggle -->
-          <div class="flex items-center gap-2 mt-1.5">
-            <span 
-              class="text-xs transition"
-              :class="dialogSearchMode === 'semantic' ? 'text-orange-400' : 'text-gray-500'"
-            >Semantic</span>
-            <button 
-              @click="dialogSearchMode = dialogSearchMode === 'semantic' ? 'keyword' : 'semantic'; if (filters.dialog) debouncedSearch()"
-              class="w-8 h-4 bg-[#333] rounded-full flex items-center px-0.5"
+          <div class="flex items-center gap-1.5 mt-1">
+            <span
+              class="text-[10px] transition"
+              :class="[
+                dialogSearchMode === 'semantic' ? 'text-orange-400' : 'text-gray-500',
+                !serverStatus.sentenceLoaded ? 'opacity-50' : ''
+              ]"
+            >{{ serverStatus.sentenceLoaded ? 'Semantic' : 'Loading...' }}</span>
+            <button
+              @click="toggleDialogMode"
+              :disabled="!serverStatus.sentenceLoaded"
+              class="w-6 h-3 bg-[#333] rounded-sm flex items-center px-0.5"
+              :class="{ 'opacity-50 cursor-not-allowed': !serverStatus.sentenceLoaded }"
               title="Toggle between semantic (finds synonyms) and keyword (exact match) search"
             >
-              <span 
-                class="w-3 h-3 bg-white rounded-full transition-all duration-200"
-                :class="dialogSearchMode === 'semantic' ? 'ml-0' : 'ml-auto'"
+              <span
+                class="w-2 h-2 bg-white rounded-sm transition-all duration-200"
+                :class="dialogSearchMode === 'semantic' && serverStatus.sentenceLoaded ? 'ml-0' : 'ml-auto'"
               ></span>
             </button>
-            <span 
-              class="text-xs transition"
-              :class="dialogSearchMode === 'keyword' ? 'text-orange-400' : 'text-gray-500'"
+            <span
+              class="text-[10px] transition"
+              :class="dialogSearchMode === 'keyword' || !serverStatus.sentenceLoaded ? 'text-orange-400' : 'text-gray-500'"
             >Keyword</span>
+          </div>
+          <div v-if="dialogSearchMode === 'semantic' && !semanticTipDismissed" class="flex items-center gap-1.5 mt-1.5 px-2 py-1 bg-amber-500/10 border border-amber-500/20 rounded-sm">
+            <svg class="w-3 h-3 text-amber-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z"/>
+            </svg>
+            <span class="text-[10px] text-amber-200/80">Works best with phrases</span>
+            <button @click="dismissSemanticTip" class="ml-auto text-amber-400/50 hover:text-amber-300 text-sm leading-none">&times;</button>
           </div>
         </div>
 
         <!-- Metadata Filter -->
         <div class="control-group flex-1 min-w-[320px]">
-          <label class="control-label">Metadata</label>
-          <div class="flex flex-col gap-2">
+          <label class="control-label">
+            <span class="flex items-center gap-1.5">
+              <span class="category-swatch category-swatch-metadata"></span>
+              Metadata
+            </span>
+          </label>
+          <div class="flex flex-col gap-1.5">
             <!-- Active metadata filters as lozenges -->
-            <div 
-              class="flex flex-wrap items-center gap-1.5 min-h-[36px] bg-[#262626] rounded px-2 py-1.5"
+            <div
+              class="flex flex-wrap items-center gap-1 min-h-[28px] bg-[#262626] rounded-sm px-1.5 py-1"
             >
               <template v-if="metadataFilters.length === 0">
-                <span class="text-gray-600 text-xs">Add filters below</span>
+                <span class="text-gray-600 text-[10px]">Add filters below</span>
               </template>
-              <span 
-                v-for="(mf, idx) in metadataFilters" 
+              <span
+                v-for="(mf, idx) in metadataFilters"
                 :key="idx"
-                class="inline-flex items-center gap-1 bg-orange-600/30 text-orange-300 text-xs px-2 py-0.5 rounded"
+                class="inline-flex items-center gap-0.5 bg-orange-600/30 text-orange-300 text-[10px] px-1.5 py-0.5 rounded-sm"
               >
                 <span class="font-medium">{{ mf.label }}</span>
                 <button @click="removeMetadataFilter(idx)" class="hover:text-white">×</button>
               </span>
             </div>
             <!-- Add new filter row -->
-            <div class="flex items-center gap-2">
-              <select 
+            <div class="flex items-center gap-1.5">
+              <select
                 v-model="newMeta.key"
-                class="bg-[#262626] rounded px-2 py-1.5 text-sm text-gray-300 border-none outline-none appearance-none cursor-pointer hover:bg-[#333] pr-6"
-                style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2212%22 height=%2212%22 viewBox=%220 0 12 12%22%3E%3Cpath fill=%22%239ca3af%22 d=%22M3 4.5L6 8l3-3.5H3z%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 8px center;"
+                class="bg-[#262626] rounded-sm px-1.5 py-1 text-xs text-gray-300 border-none outline-none appearance-none cursor-pointer hover:bg-[#333] pr-5"
+                style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 12 12%22%3E%3Cpath fill=%22%239ca3af%22 d=%22M3 4.5L6 8l3-3.5H3z%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 6px center;"
                 @change="onMetaKeyChange"
               >
                 <option value="">+ Add filter</option>
@@ -211,10 +251,10 @@
                   @keydown.enter="addMetadataFilter"
                 />
               </template>
-              <button 
+              <button
                 v-if="newMeta.key"
                 @click="addMetadataFilter"
-                class="px-2 py-1 bg-orange-600 hover:bg-orange-500 rounded text-xs"
+                class="px-1.5 py-0.5 bg-orange-600 hover:bg-orange-500 rounded-sm text-[10px]"
               >
                 Add
               </button>
@@ -225,43 +265,38 @@
         <!-- Face Filter -->
         <div class="control-group flex-1 min-w-[140px]">
           <label class="control-label">
-            <span>Face Filter</span>
+            <span class="flex items-center gap-1.5">
+              <span class="category-swatch category-swatch-face"></span>
+              Face Filter
+            </span>
             <span class="flex items-center gap-1">
-              <span class="text-gray-500 text-xs normal-case">min</span>
-              <input 
-                type="text" 
+              <span class="text-gray-500 text-[10px] normal-case">min</span>
+              <input
+                type="text"
                 v-model="thresholds.face"
                 class="threshold-input"
               />
             </span>
           </label>
-          <div class="flex items-center gap-2 min-h-[36px] bg-[#262626] rounded px-2">
-            <span v-if="!faceFilter" class="text-gray-600 text-xs">Click face in results</span>
+          <div class="flex items-center gap-1.5 min-h-[28px] bg-[#262626] rounded-sm px-1.5">
+            <span v-if="!faceFilter" class="text-gray-600 text-[10px]">Click face in results</span>
             <template v-else>
-              <canvas ref="faceCanvas" width="28" height="28" class="rounded border border-teal-500"></canvas>
-              <span class="text-xs text-gray-300">Scene {{ faceFilter.sceneIndex }}</span>
-              <button @click="clearFaceFilter" class="text-red-400 hover:text-red-300 text-xs ml-auto">x</button>
+              <canvas ref="faceCanvas" width="24" height="24" class="rounded-sm border border-teal-500"></canvas>
+              <span class="text-[10px] text-gray-300">{{ faceFilter.filename ? `${formatFilename(faceFilter.filename, 12)} #${faceFilter.sceneIndex}` : `Scene ${faceFilter.sceneIndex}` }}</span>
+              <button @click="clearFaceFilter" class="text-red-400 hover:text-red-300 text-[10px] ml-auto">×</button>
             </template>
           </div>
-          <!-- Browse faces button -->
-          <button
-            @click="showFaceBrowser = true"
-            :disabled="!!faceFilter"
-            class="mt-1.5 w-full px-2 py-1 text-xs rounded transition"
-            :class="faceFilter
-              ? 'bg-[#1a1a1a] text-gray-600 cursor-not-allowed'
-              : 'bg-[#262626] hover:bg-[#333] text-gray-400 hover:text-white'"
-          >
-            {{ results.length > 0 ? 'Browse Faces in Selection' : 'Browse All Faces' }}
-          </button>
         </div>
 
         <!-- Visual Match -->
         <div class="control-group flex-1 min-w-[140px]">
           <label class="control-label">
-            <span>Visual Match</span>
+            <span class="flex items-center gap-1.5">
+              <span class="category-swatch category-swatch-visual-match"></span>
+              Visual Match
+            </span>
             <span class="flex items-center gap-1">
-              <span class="text-gray-500 text-xs normal-case">min</span>
+              <span class="text-gray-500 text-[10px] normal-case">min</span>
               <input
                 type="text"
                 v-model="thresholds.visualMatch"
@@ -269,38 +304,28 @@
               />
             </span>
           </label>
-          <div class="flex items-center gap-2 min-h-[36px] bg-[#262626] rounded px-2">
-            <span v-if="!visualMatch" class="text-gray-600 text-xs">Click thumbnail to match</span>
+          <div class="flex items-center gap-1.5 min-h-[28px] bg-[#262626] rounded-sm px-1.5">
+            <span v-if="!visualMatch" class="text-gray-600 text-[10px]">Click thumbnail to match</span>
             <template v-else>
-              <img :src="getSceneThumbnail(visualMatch.sceneIndex)" class="h-7 rounded border border-violet-500" />
-              <span class="text-xs text-gray-300">Scene {{ visualMatch.sceneIndex }}</span>
-              <button @click="clearVisualMatch" class="text-red-400 hover:text-red-300 text-xs ml-auto">x</button>
+              <img :src="getSceneThumbnail(visualMatch.sceneId)" class="h-6 rounded-sm border border-violet-500" />
+              <span class="text-[10px] text-gray-300">{{ visualMatch.filename ? `${formatFilename(visualMatch.filename, 12)} #${visualMatch.sceneIndex}` : `Scene ${visualMatch.sceneIndex}` }}</span>
+              <button @click="clearVisualMatch" class="text-red-400 hover:text-red-300 text-[10px] ml-auto">×</button>
             </template>
           </div>
-          <button
-            @click="showVisualBrowser = true"
-            :disabled="!!visualMatch"
-            class="mt-1.5 w-full px-2 py-1 text-xs rounded transition"
-            :class="visualMatch
-              ? 'bg-[#1a1a1a] text-gray-600 cursor-not-allowed'
-              : 'bg-[#262626] hover:bg-[#333] text-gray-400 hover:text-white'"
-          >
-            Browse Visual Groups
-          </button>
         </div>
 
         <!-- Actions -->
         <div class="control-group flex items-end">
-          <div class="flex gap-2">
-            <button 
+          <div class="flex gap-1.5">
+            <button
               @click="resetFilters"
-              class="px-3 py-2 bg-[#262626] hover:bg-[#333] rounded text-sm transition"
+              class="px-2 py-1 bg-[#262626] hover:bg-[#333] rounded-sm text-xs transition"
             >
               Reset
             </button>
-            <button 
+            <button
               @click="search"
-              class="px-4 py-2 bg-orange-500 hover:bg-orange-600 rounded text-sm font-medium transition"
+              class="px-3 py-1 bg-orange-500 hover:bg-orange-600 rounded-sm text-xs font-medium transition"
             >
               Search
             </button>
@@ -309,7 +334,7 @@
       </div>
 
       <!-- Filter Chain (Lozenges) -->
-      <div v-if="activeFilters.length > 0" class="mt-4 flex flex-wrap items-center gap-2">
+      <div v-if="activeFilters.length > 0" class="mt-3 flex flex-wrap items-center gap-1.5">
         <span class="text-xs text-gray-500">Filters:</span>
         <template v-for="(filter, idx) in activeFilters" :key="filter.type">
           <span v-if="idx > 0" class="text-gray-500">-></span>
@@ -321,94 +346,114 @@
       </div>
     </div>
 
+    <!-- Results Section -->
+    <div class="border-t border-[#2a2a2a] pt-4">
     <!-- Results Header -->
-    <div class="mb-4 flex justify-between items-center">
-      <h2 class="text-lg font-semibold">Results</h2>
-      <div class="flex items-center gap-4">
-        <span class="text-gray-500 text-sm">{{ resultCount }}</span>
+    <div class="mb-3 flex justify-between items-center">
+      <h2 class="text-sm font-semibold text-gray-300">Results</h2>
+      <div class="flex items-center gap-3">
+        <span class="text-gray-500 text-xs">{{ resultCount }}</span>
+        <div v-if="results.length > 0" class="flex items-center gap-2">
+          <button
+            @click="addAllToEdl"
+            class="flex items-center gap-1 px-2 py-0.5 bg-[#262626] hover:bg-[#333] rounded-sm text-[10px] text-gray-300 transition"
+            title="Add all results to EDL"
+          >
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+            Add All to EDL
+          </button>
+          <transition name="fade">
+            <span v-if="edlFeedback" class="text-[10px] text-orange-400 font-medium">
+              {{ edlFeedback }}
+            </span>
+          </transition>
+        </div>
         <!-- Thumbnail size slider -->
-        <div class="flex items-center gap-2">
-          <span class="text-xs text-gray-500">Size</span>
-          <input 
-            type="range" 
-            v-model="thumbnailColumns" 
-            min="3" 
-            max="8" 
-            class="w-24 accent-orange-500"
+        <div class="flex items-center gap-1.5">
+          <span class="text-[10px] text-gray-500">Size</span>
+          <input
+            type="range"
+            v-model="thumbnailColumns"
+            min="3"
+            max="8"
+            class="w-20 accent-orange-500"
           />
         </div>
       </div>
     </div>
 
-    <!-- Loading -->
-    <div v-if="loading" class="text-center py-12">
-      <div class="inline-block w-8 h-8 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
-      <p class="mt-4 text-gray-400">Searching...</p>
+    <!-- Search Loading -->
+    <div v-if="loading" class="text-center py-8">
+      <div class="inline-block w-6 h-6 border-2 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
+      <p class="mt-2 text-gray-400 text-xs">Searching...</p>
     </div>
 
     <!-- Results Grid -->
-    <div 
+    <div
       v-else-if="results.length > 0"
-      class="grid gap-3"
+      class="grid gap-2"
       :style="{ gridTemplateColumns: `repeat(${thumbnailColumns}, minmax(0, 1fr))` }"
     >
-      <div 
-        v-for="(scene, idx) in results" 
-        :key="scene.scene_index"
+      <div
+        v-for="(scene, idx) in results"
+        :key="scene.id"
         class="result-card group"
         @click="openScene(scene)"
       >
         <div class="thumbnail-container" :ref="el => thumbnailRefs[idx] = el">
-          <img 
-            :src="getSceneThumbnail(scene.scene_index)" 
+          <img
+            :src="getSceneThumbnail(scene.id)"
             :alt="`Scene ${scene.scene_index}`"
             class="w-full"
             style="aspect-ratio: 864/360;"
             @load="e => renderFaceBoxes(idx, scene, e.target)"
           />
-          <!-- Similarity badges (colors match filter lozenges) -->
-          <span 
-            v-if="scene.similarity" 
-            class="similarity-badge bg-amber-700/80"
+          <!-- Similarity badges (colors from centralized CSS variables) -->
+          <span
+            v-if="scene.similarity"
+            class="similarity-badge similarity-badge-visual"
           >
             {{ Math.round(scene.similarity * 100) }}%
           </span>
-          <span 
-            v-if="scene.face_similarity && !scene.combined_similarity" 
-            class="similarity-badge bg-teal-700/80"
+          <span
+            v-if="scene.face_similarity && !scene.combined_similarity"
+            class="similarity-badge similarity-badge-face"
             style="top: 24px;"
           >
             {{ Math.round(scene.face_similarity * 100) }}%
           </span>
-          <span 
-            v-if="scene.transcript_similarity" 
-            class="similarity-badge bg-slate-600/80"
+          <span
+            v-if="scene.transcript_similarity"
+            class="similarity-badge similarity-badge-dialog"
             :style="{ top: (scene.similarity ? 24 : 4) + (scene.face_similarity ? 20 : 0) + 'px' }"
           >
             {{ Math.round(scene.transcript_similarity * 100) }}%
           </span>
           <!-- Match button -->
-          <button 
-            @click.stop="setVisualMatch(scene.scene_index)"
-            class="absolute bottom-1 right-1 bg-orange-600/80 hover:bg-orange-500 text-white text-xs px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+          <button
+            @click.stop="setVisualMatch(scene.id, scene.scene_index)"
+            class="absolute bottom-1 right-1 bg-orange-600/80 hover:bg-orange-500 text-white text-[10px] px-1 py-0.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity"
             title="Find visually similar scenes"
           >
             Match
           </button>
         </div>
-        <div class="p-2">
-          <div class="text-sm font-medium">Scene {{ scene.scene_index }}</div>
-          <div class="flex items-center gap-2">
-            <span class="text-xs text-gray-400 font-mono">
-              {{ formatTimeWithFrames(scene.start_time, scene.fps) }} - {{ formatTimeWithFrames(scene.end_time, scene.fps) }}
+        <div class="p-1.5">
+          <div class="text-[10px] text-gray-400 truncate" :title="scene.filename">{{ scene.filename }}</div>
+          <div class="text-xs font-medium">Scene {{ scene.scene_index }}</div>
+          <div class="flex items-center gap-1.5">
+            <span class="text-[10px] text-gray-400 font-mono">
+              {{ formatTimeWithFrames(scene.start_time, scene.fps) }} - {{ formatTimeWithFrames(scene.end_time - (1 / (scene.fps || 24)), scene.fps) }}
             </span>
-            <span v-if="scene.fps" class="text-[10px] bg-[#333] text-gray-400 px-1.5 py-0.5 rounded font-medium">
+            <span v-if="scene.fps" class="text-[9px] bg-[#333] text-gray-400 px-1 py-0.5 rounded-sm font-medium">
               {{ scene.fps }}fps
             </span>
           </div>
-          <div 
-            v-if="scene.transcript" 
-            class="text-xs text-gray-500 mt-1 truncate"
+          <div
+            v-if="scene.transcript"
+            class="text-[10px] text-gray-500 mt-0.5 truncate"
             :title="scene.transcript"
           >
             "{{ scene.transcript }}"
@@ -418,197 +463,177 @@
     </div>
 
     <!-- Empty State -->
-    <div v-else class="text-center py-12">
-      <p class="text-gray-500">Enter search criteria to find scenes</p>
+    <div v-else class="text-center py-8">
+      <p class="text-gray-500 text-xs">Enter search criteria to find scenes</p>
     </div>
 
     <!-- Load More -->
-    <div v-if="hasMore && !loading" class="text-center py-6">
-      <button 
+    <div v-if="hasMore && !loading" class="text-center py-4">
+      <button
         @click="loadMore"
-        class="px-6 py-2 bg-[#262626] hover:bg-[#333] rounded-lg font-medium transition"
+        class="px-4 py-1.5 bg-[#262626] hover:bg-[#333] rounded-sm text-xs font-medium transition"
       >
         Load More Scenes
       </button>
-      <span class="text-gray-500 text-sm ml-3">{{ remainingCount }} more</span>
+      <span class="text-gray-500 text-[10px] ml-2">{{ remainingCount }} more</span>
+    </div>
     </div>
 
     <!-- Scene Modal -->
-    <div 
-      v-if="selectedScene" 
-      class="modal-backdrop"
+    <div
+      v-if="selectedScene"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3"
       @click.self="closeModal"
     >
-      <div class="bg-[#171717] rounded-lg max-w-4xl w-full mx-4 overflow-hidden">
-        <div class="p-4 border-b border-[#262626] flex justify-between items-center">
+      <div class="bg-[#171717] rounded-sm max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div class="p-3 border-b border-[#262626] flex justify-between items-center">
           <div>
-            <div class="flex items-center gap-2">
-              <h3 class="font-semibold">Scene {{ selectedScene.scene_index }}</h3>
-              <span v-if="selectedScene.fps" class="text-xs bg-orange-600/30 text-orange-300 px-1.5 py-0.5 rounded font-medium">
+            <div class="flex items-center gap-1.5">
+              <h3 class="text-sm font-semibold">Scene {{ selectedScene.scene_index }}</h3>
+              <span v-if="selectedScene.fps" class="text-[10px] bg-orange-600/30 text-orange-300 px-1 py-0.5 rounded-sm font-medium">
                 {{ selectedScene.fps }}fps
               </span>
-              <span v-if="selectedScene.width && selectedScene.height" class="text-xs bg-[#333] text-gray-400 px-1.5 py-0.5 rounded font-medium">
+              <span v-if="selectedScene.width && selectedScene.height" class="text-[10px] bg-[#333] text-gray-400 px-1 py-0.5 rounded-sm font-medium">
                 {{ selectedScene.width }}×{{ selectedScene.height }}
               </span>
             </div>
-            <p class="text-xs text-gray-500 truncate max-w-xl" :title="selectedScene.filename || selectedScene.path">
+            <p class="text-[10px] text-gray-500 truncate max-w-xl" :title="selectedScene.filename || selectedScene.path">
               {{ selectedScene.filename || selectedScene.path }}
             </p>
           </div>
-          <button @click="closeModal" class="text-gray-400 hover:text-white text-2xl">×</button>
+          <button @click="closeModal" class="text-gray-400 hover:text-white text-xl">×</button>
         </div>
-        <div class="p-4">
+        <div class="p-3">
           <!-- Custom Video Player -->
-          <div class="relative rounded overflow-hidden bg-black">
-            <!-- Poster frame overlay - shown until first play -->
-            <div 
-              v-if="showPosterOverlay"
-              class="absolute inset-0 z-10 cursor-pointer"
-              @click="startPlayback"
+          <div class="relative rounded-sm overflow-hidden bg-black">
+            <!-- Spinner overlay - only shown until first valid frame -->
+            <div
+              v-if="showSpinner"
+              class="absolute inset-0 z-10 bg-black flex items-center justify-center pointer-events-none"
             >
-              <img 
-                :src="getSceneThumbnail(selectedScene.scene_index)"
-                class="w-full h-full object-contain"
-                alt="Scene poster"
-              />
-              <!-- Big play button -->
-              <div class="absolute inset-0 flex items-center justify-center">
-                <div class="w-20 h-20 rounded-full bg-black/60 flex items-center justify-center hover:bg-black/80 transition">
-                  <svg class="w-10 h-10 text-white ml-1" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M8 5v14l11-7z"/>
-                  </svg>
-                </div>
-              </div>
+              <svg class="animate-spin h-8 w-8 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
             </div>
-            
-            <video 
-              ref="modalVideo"
-              class="w-full"
+
+            <!-- Canvas displays approved frames only -->
+            <canvas
+              ref="playerCanvas"
+              class="w-full cursor-pointer"
+              @click="togglePlay"
+            ></canvas>
+
+            <!-- Hidden video for decoding -->
+            <video
+              ref="hiddenVideo"
+              class="hidden"
               :src="getVideoUrl(selectedScene.file_id)"
               preload="auto"
               @loadeddata="onVideoLoaded"
-              @timeupdate="onVideoTimeUpdate"
               @play="isPlaying = true"
               @pause="isPlaying = false"
-              @click="togglePlay"
-              @seeked="onVideoSeeked"
+              @error="onVideoError"
             ></video>
-            
-            <!-- Custom Controls -->
-            <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-3 pt-8">
+
+            <!-- Video error overlay -->
+            <div
+              v-if="videoError"
+              class="absolute inset-0 z-30 bg-black/90 flex flex-col items-center justify-center text-center p-4"
+            >
+              <svg class="w-10 h-10 text-red-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+              </svg>
+              <p class="text-sm text-red-400 font-medium">Media not accessible</p>
+              <p class="text-[10px] text-gray-500 mt-1 max-w-[200px]">
+                The drive may be offline or the file was moved
+              </p>
+            </div>
+
+            <!-- Custom Controls (z-20 to appear above buffering overlay) -->
+            <div class="absolute bottom-0 left-0 right-0 z-20 bg-gradient-to-t from-black/90 to-transparent p-2 pt-6 select-none">
               <!-- Progress Bar (scene-only) -->
-              <div 
-                class="relative h-2 bg-gray-700 rounded cursor-pointer mb-3 group"
+              <div
+                class="relative h-1.5 bg-gray-700 rounded-sm cursor-pointer mb-2 group"
                 @mousedown="startScrubbing"
                 ref="progressBar"
               >
-                <div 
-                  class="absolute h-full bg-orange-500 rounded pointer-events-none"
+                <div
+                  class="absolute h-full bg-orange-500 rounded-sm pointer-events-none"
                   :style="{ width: sceneProgress + '%' }"
                 ></div>
-                <div 
-                  class="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg pointer-events-none"
+                <div
+                  class="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-sm shadow-lg pointer-events-none"
                   :style="{ left: sceneProgress + '%', transform: 'translate(-50%, -50%)' }"
                 ></div>
               </div>
               
               <!-- Controls Row -->
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-1.5">
                 <!-- Play/Pause -->
-                <button @click="togglePlay" class="text-white hover:text-orange-400 transition p-1">
-                  <svg v-if="!isPlaying" class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                <button @click="togglePlay" class="text-white hover:text-orange-400 transition p-0.5">
+                  <svg v-if="!isPlaying" class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M8 5v14l11-7z"/>
                   </svg>
-                  <svg v-else class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                  <svg v-else class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
                   </svg>
                 </button>
-                
-                <!-- Frame navigation -->
-                <div class="flex items-center gap-0.5 border-l border-gray-600 pl-2 ml-1">
-                  <!-- Jump to first frame |< -->
-                  <button @click="jumpToStart" class="text-gray-400 hover:text-white transition p-1" title="First frame">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M18.41 16.59L13.82 12l4.59-4.59L17 6l-6 6 6 6zM6 6h2v12H6z"/>
-                    </svg>
-                  </button>
-                  <!-- Back 5 frames << -->
-                  <button @click="stepFrames(-5)" class="text-gray-400 hover:text-white transition p-1" title="-5 frames">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M17.59 18L13 12l4.59-6L16 4l-6 8 6 8zM11.59 18L7 12l4.59-6L10 4l-6 8 6 8z"/>
-                    </svg>
-                  </button>
-                  <!-- Back 1 frame < -->
-                  <button @click="stepFrames(-1)" class="text-gray-400 hover:text-white transition p-1" title="-1 frame">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z"/>
-                    </svg>
-                  </button>
-                  <!-- Forward 1 frame > -->
-                  <button @click="stepFrames(1)" class="text-gray-400 hover:text-white transition p-1" title="+1 frame">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z"/>
-                    </svg>
-                  </button>
-                  <!-- Forward 5 frames >> -->
-                  <button @click="stepFrames(5)" class="text-gray-400 hover:text-white transition p-1" title="+5 frames">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M6.41 18L11 12 6.41 6 8 4l6 8-6 8zM12.41 18L17 12l-4.59-6L14 4l6 8-6 8z"/>
-                    </svg>
-                  </button>
-                  <!-- Jump to last frame >| -->
-                  <button @click="jumpToEnd" class="text-gray-400 hover:text-white transition p-1" title="Last frame">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M5.59 7.41L10.18 12l-4.59 4.59L7 18l6-6-6-6zM16 6h2v12h-2z"/>
-                    </svg>
-                  </button>
-                </div>
-                
+
                 <!-- Time display -->
-                <span class="text-white text-xs font-mono ml-2">
+                <span class="text-white text-[10px] font-mono ml-1.5">
                   {{ formatTimeWithFrames(currentSceneTime) }} / {{ formatTimeWithFrames(sceneDuration) }}
                 </span>
-                
+
                 <div class="flex-1"></div>
-                
-                <!-- Replay -->
-                <button @click="replayScene" class="text-gray-400 hover:text-white transition p-1" title="Replay scene">
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+
+                <!-- Add to EDL button -->
+                <button
+                  @click="toggleEdl"
+                  class="flex items-center gap-1 px-2 py-0.5 rounded-sm text-[10px] font-medium transition"
+                  :class="isInEdl ? 'bg-green-600/30 text-green-400' : 'bg-[#333] hover:bg-[#444] text-white'"
+                  :title="isInEdl ? 'Remove from EDL' : 'Add to EDL'"
+                >
+                  <svg v-if="isInEdl" class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
                   </svg>
+                  <svg v-else class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                  </svg>
+                  EDL
                 </button>
               </div>
             </div>
           </div>
-          
+
           <!-- Metadata Grid -->
-          <div class="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
             <div class="metadata-item">
               <span class="metadata-key">In</span>
-              <span class="metadata-value font-mono text-xs">{{ formatTimeWithFrames(selectedScene.start_time) }}</span>
+              <span class="metadata-value font-mono text-[10px]">{{ formatTimeWithFrames(selectedScene.start_time) }}</span>
             </div>
             <div class="metadata-item">
               <span class="metadata-key">Out</span>
-              <span class="metadata-value font-mono text-xs">{{ formatTimeWithFrames(selectedScene.end_time - (1 / (selectedScene.fps || 24))) }}</span>
+              <span class="metadata-value font-mono text-[10px]">{{ formatTimeWithFrames(selectedScene.end_time - (1 / (selectedScene.fps || 24))) }}</span>
             </div>
             <div class="metadata-item">
               <span class="metadata-key">Duration</span>
-              <span class="metadata-value font-mono text-xs">{{ formatTimeWithFrames(sceneDuration) }}</span>
+              <span class="metadata-value font-mono text-[10px]">{{ formatTimeWithFrames(sceneDuration) }}</span>
             </div>
             <div class="metadata-item">
               <span class="metadata-key">Faces</span>
-              <span class="metadata-value">{{ selectedScene.faces?.length || 0 }}</span>
+              <span class="metadata-value text-xs">{{ selectedScene.faces?.length || 0 }}</span>
             </div>
           </div>
-          
+
           <!-- Vectors info -->
-          <div v-if="selectedScene.vectors?.length" class="mt-3 p-3 bg-[#0d0d0d] rounded">
+          <div v-if="selectedScene.vectors?.length" class="mt-2 p-2 bg-[#0d0d0d] rounded-sm">
             <span class="metadata-key">Vectors</span>
-            <div class="flex flex-wrap gap-2 mt-1">
-              <span 
-                v-for="(vec, idx) in selectedScene.vectors" 
+            <div class="flex flex-wrap gap-1.5 mt-1">
+              <span
+                v-for="(vec, idx) in selectedScene.vectors"
                 :key="idx"
-                class="inline-flex items-center gap-1 px-2 py-0.5 bg-[#1a1a1a] rounded text-xs"
+                class="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-[#1a1a1a] rounded-sm text-[10px]"
                 :title="`${vec.model} ${vec.version} (${vec.dimension}d)`"
               >
                 <span class="text-green-400">✓</span>
@@ -617,148 +642,122 @@
               </span>
             </div>
           </div>
-          
-          <div v-if="selectedScene.transcript" class="mt-3 p-3 bg-[#0d0d0d] rounded">
+
+          <div v-if="selectedScene.transcript" class="mt-2 p-2 bg-[#0d0d0d] rounded-sm">
             <span class="metadata-key">Dialog</span>
-            <p class="text-gray-300 text-sm mt-1 italic">"{{ selectedScene.transcript }}"</p>
+            <p class="text-gray-300 text-xs mt-0.5 italic">"{{ selectedScene.transcript }}"</p>
           </div>
-          
+
           <!-- File Details Accordion -->
-          <div class="mt-4 border border-[#333] rounded overflow-hidden">
-            <button 
+          <div class="mt-3 border border-[#333] rounded-sm overflow-hidden">
+            <button
               @click="showFileDetails = !showFileDetails"
-              class="w-full px-3 py-2 bg-[#1a1a1a] hover:bg-[#222] flex items-center justify-between text-sm transition"
+              class="w-full px-2 py-1.5 bg-[#1a1a1a] hover:bg-[#222] flex items-center justify-between text-xs transition"
             >
               <span class="text-gray-300 font-medium">File Details</span>
-              <svg 
-                class="w-4 h-4 text-gray-500 transition-transform" 
+              <svg
+                class="w-3 h-3 text-gray-500 transition-transform"
                 :class="{ 'rotate-180': showFileDetails }"
-                fill="none" 
-                stroke="currentColor" 
+                fill="none"
+                stroke="currentColor"
                 viewBox="0 0 24 24"
               >
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
               </svg>
             </button>
-            <div v-show="showFileDetails" class="p-3 bg-[#0d0d0d] border-t border-[#333]">
-              <div class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+            <div v-show="showFileDetails" class="p-2 bg-[#0d0d0d] border-t border-[#333]">
+              <div class="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
                 <div>
-                  <span class="text-gray-500">Path</span>
-                  <p class="text-gray-300 font-mono text-xs break-all">{{ selectedScene.path || '—' }}</p>
+                  <span class="text-gray-500 text-[10px]">Path</span>
+                  <p class="text-gray-300 font-mono text-[10px] break-all">{{ selectedScene.path || '—' }}</p>
                 </div>
                 <div>
-                  <span class="text-gray-500">Resolution</span>
-                  <p class="text-gray-300 font-mono text-xs">{{ selectedScene.width && selectedScene.height ? `${selectedScene.width}×${selectedScene.height}` : '—' }}</p>
+                  <span class="text-gray-500 text-[10px]">Resolution</span>
+                  <p class="text-gray-300 font-mono text-[10px]">{{ selectedScene.width && selectedScene.height ? `${selectedScene.width}×${selectedScene.height}` : '—' }}</p>
                 </div>
                 <div>
-                  <span class="text-gray-500">Codec</span>
-                  <p class="text-gray-300 font-mono text-xs">{{ selectedScene.codec || '—' }}</p>
+                  <span class="text-gray-500 text-[10px]">Codec</span>
+                  <p class="text-gray-300 font-mono text-[10px]">{{ selectedScene.codec || '—' }}</p>
                 </div>
                 <div>
-                  <span class="text-gray-500">Frame Rate</span>
-                  <p class="text-gray-300 font-mono text-xs">{{ selectedScene.fps ? `${selectedScene.fps} fps` : '—' }}</p>
+                  <span class="text-gray-500 text-[10px]">Frame Rate</span>
+                  <p class="text-gray-300 font-mono text-[10px]">{{ selectedScene.fps ? `${selectedScene.fps} fps` : '—' }}</p>
                 </div>
                 <div>
-                  <span class="text-gray-500">Audio Tracks</span>
-                  <p class="text-gray-300 font-mono text-xs">{{ selectedScene.audio_tracks ?? '—' }}</p>
+                  <span class="text-gray-500 text-[10px]">Audio Tracks</span>
+                  <p class="text-gray-300 font-mono text-[10px]">{{ selectedScene.audio_tracks ?? '—' }}</p>
                 </div>
                 <div>
-                  <span class="text-gray-500">File Size</span>
-                  <p class="text-gray-300 font-mono text-xs">{{ formatFileSize(selectedScene.file_size_bytes) }}</p>
+                  <span class="text-gray-500 text-[10px]">File Size</span>
+                  <p class="text-gray-300 font-mono text-[10px]">{{ formatFileSize(selectedScene.file_size_bytes) }}</p>
                 </div>
                 <div>
-                  <span class="text-gray-500">File Duration</span>
-                  <p class="text-gray-300 font-mono text-xs">{{ selectedScene.duration_seconds ? formatTime(selectedScene.duration_seconds) : '—' }}</p>
+                  <span class="text-gray-500 text-[10px]">File Duration</span>
+                  <p class="text-gray-300 font-mono text-[10px]">{{ selectedScene.duration_seconds ? formatTime(selectedScene.duration_seconds) : '—' }}</p>
                 </div>
                 <div>
-                  <span class="text-gray-500">Modified</span>
-                  <p class="text-gray-300 font-mono text-xs">{{ formatDate(selectedScene.file_modified_at) }}</p>
+                  <span class="text-gray-500 text-[10px]">Modified</span>
+                  <p class="text-gray-300 font-mono text-[10px]">{{ formatDate(selectedScene.file_modified_at) }}</p>
                 </div>
               </div>
             </div>
           </div>
-          
-          <!-- Faces in scene -->
-          <div v-if="selectedScene.faces?.length" class="mt-4">
-            <span class="metadata-key mb-2 block">Faces in Scene</span>
-            <div class="flex gap-2 flex-wrap">
-              <canvas 
-                v-for="(face, faceIdx) in selectedScene.faces"
-                :key="faceIdx"
-                :ref="el => modalFaceRefs[faceIdx] = el"
-                width="60" 
-                height="60"
-                class="rounded border-2 border-gray-600 hover:border-orange-500 cursor-pointer transition-colors"
-                @click="selectFaceFromModal(selectedScene.scene_index, faceIdx, face.bbox)"
-              ></canvas>
-            </div>
-          </div>
-          
-          <div class="mt-4">
-            <button 
-              @click="findSimilar"
-              class="px-4 py-2 bg-orange-600 hover:bg-orange-500 rounded text-sm transition"
-            >
-              Find Visually Similar Scenes
-            </button>
-          </div>
+
         </div>
       </div>
     </div>
 
     <!-- Face Select Modal -->
-    <div 
-      v-if="faceSelectModal" 
-      class="modal-backdrop"
+    <div
+      v-if="faceSelectModal"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3"
       @click.self="closeFaceModal"
     >
-      <div class="bg-[#171717] rounded-lg max-w-md w-full mx-4 p-6">
-        <h3 class="font-semibold mb-4">Select a face to filter by</h3>
-        <div class="flex gap-4 flex-wrap justify-center">
-          <div 
+      <div class="bg-[#171717] rounded-sm max-w-md w-full p-4">
+        <h3 class="text-sm font-semibold mb-3">Select a face to filter by</h3>
+        <div class="flex gap-3 flex-wrap justify-center">
+          <div
             v-for="(face, idx) in faceSelectModal.faces"
-            :key="idx"
+            :key="face.id"
             class="text-center cursor-pointer hover:opacity-80"
-            @click="selectFaceFromModal(faceSelectModal.sceneIndex, idx, face.bbox)"
+            @click="selectFaceFromModal(faceSelectModal.sceneId, faceSelectModal.sceneIndex, face.id, face.bbox, faceSelectModal.filename)"
           >
-            <canvas 
+            <canvas
               :ref="el => faceSelectRefs[idx] = el"
-              width="80" 
-              height="80"
-              class="rounded border-2 border-gray-600 hover:border-teal-500"
+              width="64"
+              height="64"
+              class="rounded-sm border border-gray-600 hover:border-teal-500"
             ></canvas>
-            <div class="text-xs text-gray-400 mt-1">Face {{ idx + 1 }}</div>
+            <div class="text-[10px] text-gray-400 mt-0.5">Face {{ idx + 1 }}</div>
           </div>
         </div>
-        <button @click="closeFaceModal" class="mt-4 text-gray-400 hover:text-white text-sm">
+        <button @click="closeFaceModal" class="mt-3 text-gray-400 hover:text-white text-xs">
           Cancel
         </button>
       </div>
     </div>
 
-    <!-- Face Browser Modal -->
-    <FaceBrowserModal
-      :isOpen="showFaceBrowser"
-      :sceneIds="currentResultSceneIds"
-      @close="showFaceBrowser = false"
-      @select="onFaceBrowserSelect"
-    />
-
-    <!-- Visual Match Browser Modal -->
-    <VisualMatchModal
-      :isOpen="showVisualBrowser"
-      :sceneIds="currentResultSceneIds"
-      @close="showVisualBrowser = false"
-      @select="onVisualBrowserSelect"
-    />
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue'
-import { api } from '../services/api'
-import FaceBrowserModal from '../components/FaceBrowserModal.vue'
-import VisualMatchModal from '../components/VisualMatchModal.vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { api, serverStatus } from '../services/api'
+import {
+  searchFilters as filters,
+  searchThresholds as thresholds,
+  dialogSearchMode,
+  faceFilter,
+  visualMatch,
+  metadataFilters,
+  filterOrder,
+  searchResults as results,
+  totalScenes,
+  currentOffset,
+  isSearchMode,
+  thumbnailColumns,
+  resetSearchState
+} from '../services/searchState'
 
 // Constants
 const PAGE_SIZE = 40
@@ -766,31 +765,26 @@ const DEBOUNCE_MS = 400
 
 // State
 const loading = ref(false)
-const results = ref([])
-const totalScenes = ref(0)
-const currentOffset = ref(0)
-const isSearchMode = ref(false)
-const thumbnailColumns = ref(5)
 const thumbnailRefs = ref({})
-const modalFaceRefs = ref({})
 const faceSelectRefs = ref({})
 const faceCanvas = ref(null)
-const modalVideo = ref(null)
+const hiddenVideo = ref(null)
+const playerCanvas = ref(null)
+const canvasCtx = ref(null)
 const progressBar = ref(null)
+
 
 // Video player state
 const isPlaying = ref(false)
-const showPosterOverlay = ref(true)  // Show poster until first play
+const showSpinner = ref(true)  // Show spinner until first valid frame
+const videoError = ref(false)  // Show error when media can't load
 const sceneProgress = ref(0)
 const currentSceneTime = ref(0)
 const isScrubbing = ref(false)
 const videoFps = ref(24) // Default, will try to detect
+const showPlaybackNotice = ref(!localStorage.getItem('dismissedPlaybackNotice'))
 
-// Filters
-const filters = reactive({
-  visual: '',
-  dialog: ''
-})
+// Filters (imported from searchState)
 
 // Default thresholds loaded from config
 const defaultThresholds = reactive({
@@ -800,22 +794,10 @@ const defaultThresholds = reactive({
   dialog: 0.35
 })
 
-const thresholds = reactive({
-  visual: '0.10',
-  face: '0.25',
-  visualMatch: '0.20',
-  dialog: '0.35'
-})
+// Thresholds and dialog mode imported from searchState
+const semanticTipDismissed = ref(localStorage.getItem('dismissedSemanticTip') === 'true')
 
-// Dialog search mode: 'semantic' (embeddings) or 'keyword' (exact match)
-const dialogSearchMode = ref('semantic')
-
-const faceFilter = ref(null)
-const visualMatch = ref(null)
-const filterOrder = ref([])
-
-// Metadata filters
-const metadataFilters = ref([])
+// Face filter, visual match, filter order, and metadata filters imported from searchState
 const newMeta = reactive({
   key: '',
   value: '',
@@ -827,10 +809,9 @@ const newMeta = reactive({
 const selectedScene = ref(null)
 const faceSelectModal = ref(null)
 const showFileDetails = ref(false)
-const showFaceBrowser = ref(false)
-const showVisualBrowser = ref(false)
 
 // Color swatches
+const showColorSwatches = ref(false)
 const colorSwatches = [
   { term: 'orange tones', class: 'bg-orange-500/50 border border-orange-500', label: 'Warm/Orange' },
   { term: 'red tones', class: 'bg-red-600/50 border border-red-600', label: 'Red' },
@@ -870,6 +851,124 @@ const sceneDuration = computed(() => {
   return (selectedScene.value.end_time || 0) - (selectedScene.value.start_time || 0) - frameTime
 })
 
+// EDL storage
+const EDL_STORAGE_KEY = 'fennec_edl_scenes'
+const edlTrigger = ref(0)  // Force reactivity on localStorage changes
+const edlFeedback = ref('')  // Brief inline feedback message
+let edlFeedbackTimer = null
+
+function showEdlFeedback(msg) {
+  clearTimeout(edlFeedbackTimer)
+  edlFeedback.value = msg
+  edlFeedbackTimer = setTimeout(() => {
+    edlFeedback.value = ''
+  }, 2000)
+}
+
+const isInEdl = computed(() => {
+  edlTrigger.value  // Depend on trigger for reactivity
+  if (!selectedScene.value) return false
+  const saved = localStorage.getItem(EDL_STORAGE_KEY)
+  if (!saved) return false
+  try {
+    const scenes = JSON.parse(saved)
+    return scenes.some(s => s.sceneId === selectedScene.value.id)
+  } catch {
+    return false
+  }
+})
+
+function toggleEdl() {
+  if (!selectedScene.value) return
+
+  const saved = localStorage.getItem(EDL_STORAGE_KEY)
+  let scenes = []
+  if (saved) {
+    try {
+      scenes = JSON.parse(saved)
+    } catch {
+      scenes = []
+    }
+  }
+
+  const sceneId = selectedScene.value.id
+
+  if (isInEdl.value) {
+    // Remove from EDL
+    scenes = scenes.filter(s => s.sceneId !== sceneId)
+  } else {
+    // Add to EDL
+    const scene = selectedScene.value
+    const fps = scene.fps || 24
+    const frameTime = 1 / fps
+
+    scenes.push({
+      sceneId: scene.id,
+      fileId: scene.file_id,
+      filename: scene.filename || scene.path?.split('/').pop() || 'Unknown',
+      inTc: scene.start_time,
+      outTc: scene.end_time - frameTime,  // end_time is exclusive
+      fps: fps
+    })
+  }
+
+  localStorage.setItem(EDL_STORAGE_KEY, JSON.stringify(scenes))
+  edlTrigger.value++
+}
+
+function addAllToEdl() {
+  if (results.value.length === 0) return
+
+  const saved = localStorage.getItem(EDL_STORAGE_KEY)
+  let scenes = []
+  if (saved) {
+    try {
+      scenes = JSON.parse(saved)
+    } catch {
+      scenes = []
+    }
+  }
+
+  // Get existing scene IDs to avoid duplicates
+  const existingIds = new Set(scenes.map(s => s.sceneId))
+  let addedCount = 0
+
+  for (const result of results.value) {
+    if (existingIds.has(result.id)) continue
+
+    const fps = result.fps || 24
+    const frameTime = 1 / fps
+
+    scenes.push({
+      sceneId: result.id,
+      fileId: result.file_id,
+      filename: result.filename || result.path?.split('/').pop() || 'Unknown',
+      inTc: result.start_time,
+      outTc: result.end_time - frameTime,
+      fps: fps
+    })
+    addedCount++
+  }
+
+  localStorage.setItem(EDL_STORAGE_KEY, JSON.stringify(scenes))
+  edlTrigger.value++
+
+  if (addedCount > 0) {
+    showEdlFeedback(`+${addedCount} added`)
+  } else {
+    showEdlFeedback('Already in EDL')
+  }
+}
+
+// Helper to format filename for display (truncate if too long)
+function formatFilename(filename, maxLen = 20) {
+  if (!filename) return ''
+  // Remove extension for cleaner display
+  const name = filename.replace(/\.[^/.]+$/, '')
+  if (name.length <= maxLen) return name
+  return name.slice(0, maxLen) + '...'
+}
+
 const activeFilters = computed(() => {
   const list = []
   for (const type of filterOrder.value) {
@@ -878,20 +977,22 @@ const activeFilters = computed(() => {
     } else if (type === 'dialog' && filters.dialog) {
       list.push({ type: 'dialog', label: `Dialog: "${filters.dialog.slice(0, 15)}${filters.dialog.length > 15 ? '...' : ''}"` })
     } else if (type === 'face' && faceFilter.value) {
-      list.push({ type: 'face', label: `Face from Scene ${faceFilter.value.sceneIndex}` })
+      const f = faceFilter.value
+      const label = f.filename
+        ? `Face: ${formatFilename(f.filename)} #${f.sceneIndex}`
+        : `Face from Scene ${f.sceneIndex}`
+      list.push({ type: 'face', label })
     } else if (type === 'visual-match' && visualMatch.value) {
-      list.push({ type: 'visual-match', label: `Similar to Scene ${visualMatch.value.sceneIndex}` })
+      const v = visualMatch.value
+      const label = v.filename
+        ? `Visual: ${formatFilename(v.filename)} #${v.sceneIndex}`
+        : `Similar to Scene ${v.sceneIndex}`
+      list.push({ type: 'visual-match', label })
     } else if (type === 'metadata' && metadataFilters.value.length > 0) {
       list.push({ type: 'metadata', label: `${metadataFilters.value.length} metadata filter${metadataFilters.value.length > 1 ? 's' : ''}` })
     }
   }
   return list
-})
-
-// Scene IDs for filtering modals to current selection
-const currentResultSceneIds = computed(() => {
-  if (results.value.length === 0) return null
-  return results.value.map(r => r.id)
 })
 
 // Methods
@@ -1082,8 +1183,8 @@ function formatDate(dateStr) {
   })
 }
 
-function getSceneThumbnail(sceneIndex) {
-  const sceneId = `scene_${String(sceneIndex).padStart(4, '0')}`
+function getSceneThumbnail(sceneId) {
+  // Use the scene's database ID (not scene_index) for globally unique thumbnails
   return `/api/thumbnail/${sceneId}`
 }
 
@@ -1092,143 +1193,180 @@ function getVideoUrl(fileId) {
 }
 
 // Custom video player functions
-function onVideoLoaded() {
-  if (modalVideo.value && selectedScene.value?.start_time != null) {
-    // Try to get FPS from the scene data, default to 24
-    videoFps.value = selectedScene.value.fps || 24
-    modalVideo.value.currentTime = selectedScene.value.start_time
-    sceneProgress.value = 0
-    currentSceneTime.value = 0
-  }
-}
-
-function onVideoSeeked() {
-  // Update display after seek completes
-  if (!modalVideo.value || !selectedScene.value) return
-  const currentTime = modalVideo.value.currentTime
-  const startTime = selectedScene.value.start_time || 0
-  currentSceneTime.value = Math.max(0, currentTime - startTime)
-}
-
-function onVideoTimeUpdate() {
-  if (!modalVideo.value || !selectedScene.value || isScrubbing.value) return
-  
-  const currentTime = modalVideo.value.currentTime
-  const startTime = selectedScene.value.start_time || 0
-  // end_time is EXCLUSIVE (first frame of next scene), so actual last frame is end_time - 1 frame
-  const fps = selectedScene.value.fps || 24
+// Playback range: true start to end-1frame (end_time is exclusive per scenedetect)
+// requestVideoFrameCallback masks GOP decode catch-up, so no frame trimming needed
+function getPlaybackRange() {
+  const fps = selectedScene.value?.fps || 24
   const frameTime = 1 / fps
-  const endTimeExclusive = selectedScene.value.end_time || modalVideo.value.duration
-  const endTimeInclusive = endTimeExclusive - frameTime  // last playable frame
-  const duration = endTimeExclusive - startTime - frameTime  // scene duration in playable frames
-  
-  // Update progress relative to scene bounds
-  currentSceneTime.value = Math.max(0, currentTime - startTime)
-  sceneProgress.value = duration > 0 ? Math.min(100, (currentSceneTime.value / duration) * 100) : 0
-  
-  // Stop at scene end (before the exclusive end frame)
-  if (currentTime >= endTimeInclusive) {
-    modalVideo.value.pause()
-    modalVideo.value.currentTime = endTimeInclusive
-    sceneProgress.value = 100
+  const startTime = selectedScene.value?.start_time || 0
+  const endTimeExclusive = selectedScene.value?.end_time || hiddenVideo.value?.duration || 0
+  return {
+    start: startTime,
+    end: endTimeExclusive - frameTime,  // last valid frame (end is exclusive)
+    frameTime
   }
 }
 
-function startPlayback() {
-  // Called when clicking the poster overlay
-  showPosterOverlay.value = false
-  if (modalVideo.value) {
-    modalVideo.value.play()
+// Canvas render loop - only draws frames within scene bounds
+// This is the "gatekeeper" - out-of-bounds frames are simply not drawn
+function renderFrame(_now, metadata) {
+  if (!hiddenVideo.value || !canvasCtx.value) return
+
+  const { start, end } = getPlaybackRange()
+
+  // Only draw if frame is within scene bounds
+  if (metadata.mediaTime >= start - 0.01 && metadata.mediaTime < end + 0.01) {
+    canvasCtx.value.drawImage(
+      hiddenVideo.value,
+      0, 0,
+      playerCanvas.value.width,
+      playerCanvas.value.height
+    )
+
+    // First valid frame = hide spinner and unmute
+    if (showSpinner.value) {
+      showSpinner.value = false
+      hiddenVideo.value.muted = false
+    }
+
+    // Update progress
+    const duration = end - start
+    currentSceneTime.value = Math.max(0, metadata.mediaTime - start)
+    sceneProgress.value = duration > 0 ? Math.min(100, (currentSceneTime.value / duration) * 100) : 0
   }
+  // else: canvas keeps showing last valid frame (automatic!)
+
+  // Check for end of scene
+  if (metadata.mediaTime >= end) {
+    hiddenVideo.value.pause()
+    sceneProgress.value = 100
+    return
+  }
+
+  // Continue render loop if still playing
+  if (!hiddenVideo.value.paused) {
+    hiddenVideo.value.requestVideoFrameCallback(renderFrame)
+  }
+}
+
+function onVideoLoaded() {
+  if (!hiddenVideo.value || !playerCanvas.value || selectedScene.value?.start_time == null) return
+
+  videoFps.value = selectedScene.value.fps || 24
+  const { start } = getPlaybackRange()
+
+  // Set canvas dimensions to match video
+  playerCanvas.value.width = hiddenVideo.value.videoWidth
+  playerCanvas.value.height = hiddenVideo.value.videoHeight
+  canvasCtx.value = playerCanvas.value.getContext('2d')
+
+  // Reset state
+  sceneProgress.value = 0
+  currentSceneTime.value = 0
+
+  // Seek to start (muted during decode)
+  hiddenVideo.value.muted = true
+  hiddenVideo.value.currentTime = start
+
+  hiddenVideo.value.addEventListener('seeked', () => {
+    // Play to decode frames, render loop will draw first valid frame
+    hiddenVideo.value.play()
+    hiddenVideo.value.requestVideoFrameCallback(renderFrame)
+  }, { once: true })
+}
+
+function onVideoError() {
+  showSpinner.value = false
+  videoError.value = true
 }
 
 function togglePlay() {
-  if (!modalVideo.value) return
-  if (modalVideo.value.paused) {
-    // If at or near scene end, restart from beginning
-    const fps = selectedScene.value.fps || 24
-    const frameTime = 1 / fps
-    const endTimeInclusive = selectedScene.value.end_time - frameTime
-    // Use small tolerance for floating point comparison
-    if (modalVideo.value.currentTime >= endTimeInclusive - 0.01) {
-      modalVideo.value.currentTime = selectedScene.value.start_time
+  if (!hiddenVideo.value) return
+
+  if (hiddenVideo.value.paused) {
+    const { start, end } = getPlaybackRange()
+
+    // At end? Seek back to start
+    if (hiddenVideo.value.currentTime >= end - 0.05) {
+      showSpinner.value = true
+      sceneProgress.value = 0
+      currentSceneTime.value = 0
+      hiddenVideo.value.muted = true
+      hiddenVideo.value.currentTime = start
+
+      hiddenVideo.value.addEventListener('seeked', () => {
+        hiddenVideo.value.muted = false
+        hiddenVideo.value.play()
+        hiddenVideo.value.requestVideoFrameCallback(renderFrame)
+      }, { once: true })
+      return
     }
-    modalVideo.value.play()
+
+    // Normal play from current position
+    hiddenVideo.value.muted = false
+    hiddenVideo.value.play()
+    hiddenVideo.value.requestVideoFrameCallback(renderFrame)
   } else {
-    modalVideo.value.pause()
+    hiddenVideo.value.pause()
   }
 }
 
 function startScrubbing(event) {
-  if (!modalVideo.value || !progressBar.value || !selectedScene.value) return
-  
+  if (!hiddenVideo.value || !progressBar.value || !selectedScene.value) return
+
   isScrubbing.value = true
-  modalVideo.value.pause()
-  
+  hiddenVideo.value.pause()
+
   seekFromEvent(event)
-  
+
   const onMouseMove = (e) => seekFromEvent(e)
   const onMouseUp = () => {
     isScrubbing.value = false
     document.removeEventListener('mousemove', onMouseMove)
     document.removeEventListener('mouseup', onMouseUp)
   }
-  
+
   document.addEventListener('mousemove', onMouseMove)
   document.addEventListener('mouseup', onMouseUp)
 }
 
 function seekFromEvent(event) {
-  if (!modalVideo.value || !progressBar.value || !selectedScene.value) return
-  
+  if (!hiddenVideo.value || !progressBar.value || !selectedScene.value) return
+
   const rect = progressBar.value.getBoundingClientRect()
   const percent = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width))
-  
-  const fps = selectedScene.value.fps || 24
-  const frameTime = 1 / fps
-  const startTime = selectedScene.value.start_time || 0
-  const endTimeExclusive = selectedScene.value.end_time || modalVideo.value.duration
-  const endTimeInclusive = endTimeExclusive - frameTime
-  const duration = endTimeInclusive - startTime
-  
-  const newTime = startTime + (percent * duration)
-  modalVideo.value.currentTime = newTime
-  
+
+  const { start, end } = getPlaybackRange()
+  const duration = end - start
+
+  const newTime = start + (percent * duration)
+  hiddenVideo.value.currentTime = newTime
+
   // Update UI immediately for responsiveness
   currentSceneTime.value = percent * duration
   sceneProgress.value = percent * 100
+
+  // Draw frame to canvas after seek
+  hiddenVideo.value.addEventListener('seeked', () => {
+    if (canvasCtx.value && hiddenVideo.value) {
+      canvasCtx.value.drawImage(
+        hiddenVideo.value,
+        0, 0,
+        playerCanvas.value.width,
+        playerCanvas.value.height
+      )
+    }
+  }, { once: true })
 }
 
-function stepFrames(frames) {
-  if (!modalVideo.value || !selectedScene.value) return
-  
-  const frameTime = 1 / videoFps.value
-  const startTime = selectedScene.value.start_time || 0
-  const endTimeExclusive = selectedScene.value.end_time || modalVideo.value.duration
-  const endTimeInclusive = endTimeExclusive - frameTime
-  
-  let newTime = modalVideo.value.currentTime + (frames * frameTime)
-  newTime = Math.max(startTime, Math.min(endTimeInclusive, newTime))
-  
-  modalVideo.value.currentTime = newTime
+function dismissPlaybackNotice() {
+  showPlaybackNotice.value = false
+  localStorage.setItem('dismissedPlaybackNotice', 'true')
 }
 
-function jumpToStart() {
-  if (!modalVideo.value || !selectedScene.value) return
-  modalVideo.value.currentTime = selectedScene.value.start_time || 0
-}
-
-function jumpToEnd() {
-  if (!modalVideo.value || !selectedScene.value) return
-  const frameTime = 1 / videoFps.value
-  const endTimeExclusive = selectedScene.value.end_time || modalVideo.value.duration
-  modalVideo.value.currentTime = endTimeExclusive - frameTime
-}
-
-function replayScene() {
-  if (!modalVideo.value || !selectedScene.value) return
-  modalVideo.value.currentTime = selectedScene.value.start_time || 0
-  modalVideo.value.play()
+function dismissSemanticTip() {
+  semanticTipDismissed.value = true
+  localStorage.setItem('dismissedSemanticTip', 'true')
 }
 
 function formatTimeWithFrames(seconds, fps = null) {
@@ -1265,10 +1403,10 @@ async function loadScenes(reset = true) {
     currentOffset.value = 0
     results.value = []
   }
-  
+
   isSearchMode.value = false
   loading.value = true
-  
+
   try {
     const data = await api.getScenes(PAGE_SIZE, currentOffset.value)
     const newScenes = data.scenes || []
@@ -1309,7 +1447,8 @@ async function search() {
     }
     if (filters.dialog) {
       // Use semantic search (embeddings) or keyword search (exact match)
-      if (dialogSearchMode.value === 'semantic') {
+      // Fall back to keyword if sentence model not loaded
+      if (dialogSearchMode.value === 'semantic' && serverStatus.sentenceLoaded) {
         params.transcript_semantic = filters.dialog
         params.transcript_threshold = parseFloat(thresholds.dialog) || 0.35
       } else {
@@ -1317,17 +1456,12 @@ async function search() {
       }
     }
     if (faceFilter.value) {
-      // Support both face_id (from browser) and face_scene+face_index (from clicking results)
-      if (faceFilter.value.faceId) {
-        params.face_id = faceFilter.value.faceId
-      } else {
-        params.face_scene = faceFilter.value.sceneIndex
-        params.face_index = faceFilter.value.faceIndex
-      }
+      // Always use face_id for accurate lookup (face_scene/face_index was broken - scene_index isn't globally unique)
+      params.face_id = faceFilter.value.faceId
       params.face_threshold = parseFloat(thresholds.face) || 0.25
     }
     if (visualMatch.value) {
-      params.visual_match_scene = visualMatch.value.sceneIndex
+      params.visual_match_scene_id = visualMatch.value.sceneId
       params.visual_match_threshold = parseFloat(thresholds.visualMatch) || 0.20
     }
     
@@ -1368,54 +1502,51 @@ async function search() {
   }
 }
 
-function loadMore() {
+async function loadMore() {
   if (!isSearchMode.value) {
-    loadScenes(false)
+    const previousCount = results.value.length
+    await loadScenes(false)
+    // Scroll to show newly loaded thumbnails
+    await nextTick()
+    const firstNewThumb = thumbnailRefs.value[previousCount]
+    if (firstNewThumb) {
+      firstNewThumb.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
   }
 }
 
 function resetFilters() {
-  filters.visual = ''
-  filters.dialog = ''
-  thresholds.visual = String(defaultThresholds.visual)
-  thresholds.face = String(defaultThresholds.face)
-  thresholds.visualMatch = String(defaultThresholds.visualMatch)
-  thresholds.dialog = String(defaultThresholds.dialog)
-  dialogSearchMode.value = 'semantic'
-  faceFilter.value = null
-  visualMatch.value = null
-  metadataFilters.value = []
-  filterOrder.value = []
+  resetSearchState(defaultThresholds)
   loadScenes(true)
 }
 
 // Face handling
 function renderFaceBoxes(idx, scene, imgElement) {
   if (!scene.faces?.length) return
-  
+
   const container = thumbnailRefs.value[idx]
   if (!container) return
-  
+
   // Remove existing face boxes
   container.querySelectorAll('.face-box').forEach(el => el.remove())
-  
+
   const sourceWidth = imgElement.naturalWidth || 864
   const sourceHeight = imgElement.naturalHeight || 360
   const displayWidth = imgElement.clientWidth
   const displayHeight = imgElement.clientHeight
-  
+
   if (displayWidth === 0 || displayHeight === 0) {
     requestAnimationFrame(() => renderFaceBoxes(idx, scene, imgElement))
     return
   }
-  
+
   const scaleX = displayWidth / sourceWidth
   const scaleY = displayHeight / sourceHeight
-  
+
   scene.faces.forEach((face, faceIdx) => {
     const bbox = typeof face.bbox === 'string' ? JSON.parse(face.bbox) : face.bbox
     const [x, y, w, h] = bbox
-    
+
     const box = document.createElement('div')
     box.className = 'face-box'
     box.style.left = `${x * scaleX}px`
@@ -1426,18 +1557,19 @@ function renderFaceBoxes(idx, scene, imgElement) {
     box.onclick = (e) => {
       e.stopPropagation()
       if (scene.faces.length > 1) {
-        showFaceSelectModal(scene.scene_index, scene.faces)
+        showFaceSelectModal(scene.id, scene.scene_index, scene.faces, scene.filename)
       } else {
-        selectFace(scene.scene_index, faceIdx, bbox)
+        // Use face.id directly for accurate lookup
+        selectFace(scene.id, scene.scene_index, face.id, bbox, scene.filename)
       }
     }
-    
+
     container.appendChild(box)
   })
 }
 
-function showFaceSelectModal(sceneIndex, faces) {
-  faceSelectModal.value = { sceneIndex, faces }
+function showFaceSelectModal(sceneId, sceneIndex, faces, filename) {
+  faceSelectModal.value = { sceneId, sceneIndex, faces, filename }
   nextTick(() => {
     const img = new Image()
     img.crossOrigin = 'anonymous'
@@ -1448,59 +1580,31 @@ function showFaceSelectModal(sceneIndex, faces) {
         if (canvas) drawFaceCrop(canvas, img, bbox, 80)
       })
     }
-    img.src = getSceneThumbnail(sceneIndex)
+    img.src = getSceneThumbnail(sceneId)
   })
 }
 
-function selectFace(sceneIndex, faceIndex, bbox) {
-  faceFilter.value = { sceneIndex, faceIndex, bbox }
+function selectFace(sceneId, sceneIndex, faceId, bbox, filename) {
+  // Use unique face.id for accurate server lookup (not scene_index which isn't globally unique)
+  faceFilter.value = { sceneId, sceneIndex, faceId, bbox, filename }
   addFilter('face')
   closeFaceModal()
-  
+
   // Draw face in filter display
   nextTick(() => {
     if (faceCanvas.value) {
       const img = new Image()
       img.crossOrigin = 'anonymous'
       img.onload = () => drawFaceCrop(faceCanvas.value, img, bbox, 28)
-      img.src = getSceneThumbnail(sceneIndex)
+      img.src = getSceneThumbnail(sceneId)
     }
   })
-  
+
   search()
 }
 
-function selectFaceFromModal(sceneIndex, faceIndex, bbox) {
-  selectFace(sceneIndex, faceIndex, typeof bbox === 'string' ? JSON.parse(bbox) : bbox)
-}
-
-function onFaceBrowserSelect(face) {
-  // Face browser returns a face object with scene_index and bbox
-  // We need to find the face index within the scene
-  // For now, use face.id as a unique identifier
-  const bbox = face.bbox
-  const sceneIndex = face.scene_index
-  
-  // Set filter with face id instead of face index (more reliable for browse)
-  faceFilter.value = { 
-    sceneIndex, 
-    faceIndex: 0,  // Will be looked up by face_id on server
-    faceId: face.id,  // Use face id for exact match
-    bbox 
-  }
-  addFilter('face')
-  
-  // Draw face in filter display
-  nextTick(() => {
-    if (faceCanvas.value) {
-      const img = new Image()
-      img.crossOrigin = 'anonymous'
-      img.onload = () => drawFaceCrop(faceCanvas.value, img, bbox, 28)
-      img.src = api.thumbnailUrl(face.scene_id)
-    }
-  })
-  
-  search()
+function selectFaceFromModal(sceneId, sceneIndex, faceId, bbox, filename) {
+  selectFace(sceneId, sceneIndex, faceId, typeof bbox === 'string' ? JSON.parse(bbox) : bbox, filename)
 }
 
 function clearFaceFilter() {
@@ -1523,14 +1627,10 @@ function drawFaceCrop(canvas, img, bbox, size) {
 }
 
 // Visual match
-function setVisualMatch(sceneIndex) {
-  visualMatch.value = { sceneIndex }
+function setVisualMatch(sceneId, sceneIndex, filename = null) {
+  visualMatch.value = { sceneId, sceneIndex, filename }
   addFilter('visual-match')
   search()
-}
-
-function onVisualBrowserSelect(scene) {
-  setVisualMatch(scene.scene_index)
 }
 
 function clearVisualMatch() {
@@ -1543,9 +1643,10 @@ function clearVisualMatch() {
 async function openScene(scene) {
   // Set initial scene data from search results
   selectedScene.value = scene
-  showPosterOverlay.value = true  // Reset poster state for new scene
+  showSpinner.value = true  // Show spinner until first valid frame
+  videoError.value = false  // Reset error state
   showFileDetails.value = false  // Collapse file details for new scene
-  
+
   // Fetch full scene details (includes vectors)
   try {
     const fullScene = await api.getScene(scene.scene_index)
@@ -1556,37 +1657,15 @@ async function openScene(scene) {
   } catch (err) {
     console.error('Failed to fetch scene vectors:', err)
   }
-  
-  nextTick(() => {
-    if (scene.faces?.length && modalVideo.value) {
-      const img = new Image()
-      img.crossOrigin = 'anonymous'
-      img.onload = () => {
-        scene.faces.forEach((face, idx) => {
-          const bbox = typeof face.bbox === 'string' ? JSON.parse(face.bbox) : face.bbox
-          const canvas = modalFaceRefs.value[idx]
-          if (canvas) drawFaceCrop(canvas, img, bbox, 60)
-        })
-      }
-      img.src = getSceneThumbnail(scene.scene_index)
-    }
-  })
 }
 
 function closeModal() {
-  if (modalVideo.value) modalVideo.value.pause()
+  if (hiddenVideo.value) hiddenVideo.value.pause()
   selectedScene.value = null
 }
 
 function closeFaceModal() {
   faceSelectModal.value = null
-}
-
-function findSimilar() {
-  if (selectedScene.value) {
-    closeModal()
-    setVisualMatch(selectedScene.value.scene_index)
-  }
 }
 
 // Keyboard shortcuts
@@ -1600,25 +1679,33 @@ function handleKeydown(e) {
   }
 }
 
+function toggleDialogMode() {
+  if (!serverStatus.sentenceLoaded) return
+  dialogSearchMode.value = dialogSearchMode.value === 'semantic' ? 'keyword' : 'semantic'
+  if (filters.dialog) debouncedSearch()
+}
+
 async function loadThresholds() {
   try {
-    const [visual, visualMatch, face, dialog] = await Promise.all([
+    const [visualCfg, visualMatchCfg, faceCfg, dialogCfg] = await Promise.all([
       api.getConfig('search_threshold_visual'),
       api.getConfig('search_threshold_visual_match'),
       api.getConfig('search_threshold_face'),
       api.getConfig('search_threshold_transcript')
     ])
-    
-    defaultThresholds.visual = visual.value ?? 0.10
-    defaultThresholds.visualMatch = visualMatch.value ?? 0.20
-    defaultThresholds.face = face.value ?? 0.25
-    defaultThresholds.dialog = dialog.value ?? 0.35
-    
-    // Set current thresholds to defaults on load
-    thresholds.visual = String(defaultThresholds.visual)
-    thresholds.visualMatch = String(defaultThresholds.visualMatch)
-    thresholds.face = String(defaultThresholds.face)
-    thresholds.dialog = String(defaultThresholds.dialog)
+
+    defaultThresholds.visual = visualCfg.value ?? 0.10
+    defaultThresholds.visualMatch = visualMatchCfg.value ?? 0.20
+    defaultThresholds.face = faceCfg.value ?? 0.25
+    defaultThresholds.dialog = dialogCfg.value ?? 0.35
+
+    // Only set thresholds to defaults on first load (when they're still at initial values)
+    if (thresholds.visual === '0.10' && thresholds.face === '0.25') {
+      thresholds.visual = String(defaultThresholds.visual)
+      thresholds.visualMatch = String(defaultThresholds.visualMatch)
+      thresholds.face = String(defaultThresholds.face)
+      thresholds.dialog = String(defaultThresholds.dialog)
+    }
   } catch (err) {
     console.error('Failed to load threshold config:', err)
   }
@@ -1626,7 +1713,21 @@ async function loadThresholds() {
 
 onMounted(() => {
   loadThresholds()
-  loadScenes()
+  // Only load scenes if we don't already have results (preserves state when returning to page)
+  if (results.value.length === 0) {
+    loadScenes()
+  }
   document.addEventListener('keydown', handleKeydown)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
+})
+
+// Auto-switch to semantic mode when sentence model loads (if no dialog filter entered)
+watch(() => serverStatus.sentenceLoaded, (loaded) => {
+  if (loaded && !filters.dialog && dialogSearchMode.value === 'keyword') {
+    dialogSearchMode.value = 'semantic'
+  }
 })
 </script>

@@ -1,275 +1,193 @@
 <template>
-  <div class="max-w-4xl mx-auto px-4 py-6">
-    <h1 class="text-2xl font-semibold mb-6">Report</h1>
+  <div class="max-w-4xl mx-auto px-4 py-4">
+    <h1 class="text-lg font-semibold mb-4">Report</h1>
 
     <!-- Stats Cards -->
-    <div class="grid grid-cols-4 gap-4 mb-6">
-      <div class="bg-[#171717] rounded-lg p-4">
-        <div class="text-3xl font-semibold text-orange-500">{{ stats.shots }}</div>
-        <div class="text-sm text-gray-400 mt-1">Shots</div>
+    <div class="grid grid-cols-4 gap-2 mb-4">
+      <div class="bg-[#171717] rounded-sm p-2">
+        <div class="text-xl font-semibold text-orange-500">{{ stats.files }}</div>
+        <div class="text-[10px] text-gray-400 mt-0.5">Files</div>
       </div>
-      <div class="bg-[#171717] rounded-lg p-4">
-        <div class="text-3xl font-semibold text-orange-500">{{ stats.scenes }}</div>
-        <div class="text-sm text-gray-400 mt-1">Scenes</div>
+      <div class="bg-[#171717] rounded-sm p-2">
+        <div class="text-xl font-semibold text-orange-500">{{ stats.scenes }}</div>
+        <div class="text-[10px] text-gray-400 mt-0.5">Scenes</div>
       </div>
-      <div class="bg-[#171717] rounded-lg p-4">
-        <div class="text-3xl font-semibold text-orange-500">{{ stats.faces }}</div>
-        <div class="text-sm text-gray-400 mt-1">Faces</div>
+      <div class="bg-[#171717] rounded-sm p-2">
+        <div class="text-xl font-semibold text-orange-500">{{ stats.faces }}</div>
+        <div class="text-[10px] text-gray-400 mt-0.5">Faces</div>
       </div>
-      <div class="bg-[#171717] rounded-lg p-4">
-        <div class="text-3xl font-semibold text-orange-500">{{ formatDuration(stats.totalDuration) }}</div>
-        <div class="text-sm text-gray-400 mt-1">Total Duration</div>
+      <div class="bg-[#171717] rounded-sm p-2">
+        <div class="text-xl font-semibold text-orange-500">{{ formatDuration(stats.totalDuration) }}</div>
+        <div class="text-[10px] text-gray-400 mt-0.5">Total Duration</div>
       </div>
     </div>
 
-    <!-- Scan Progress (shown when scanning) -->
-    <section v-if="scanProgress.phase !== 'idle'" class="bg-[#171717] rounded-lg p-6 mb-6 border border-yellow-500/30">
-      <div class="flex items-center gap-2 mb-4">
-        <div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse"></div>
-        <h2 class="text-lg font-medium">Scanning Files</h2>
-        <span class="text-sm text-gray-500">{{ formatScanPhase(scanProgress.phase) }}</span>
-      </div>
-
-      <div class="bg-[#262626] rounded-lg p-4">
-        <!-- Current folder (during discovery) -->
-        <div v-if="scanProgress.current_folder" class="text-sm text-gray-400 mb-3 truncate">
-          📂 {{ scanProgress.current_folder }}
-        </div>
-
-        <!-- Progress stats -->
-        <div class="grid grid-cols-4 gap-4 text-center mb-3">
-          <div>
-            <div class="text-xl font-semibold text-yellow-400">{{ scanProgress.files_found || 0 }}</div>
-            <div class="text-xs text-gray-500">Found</div>
-          </div>
-          <div>
-            <div class="text-xl font-semibold text-green-400">{{ scanProgress.files_new || 0 }}</div>
-            <div class="text-xs text-gray-500">New</div>
-          </div>
-          <div>
-            <div class="text-xl font-semibold text-blue-400">{{ scanProgress.files_updated || 0 }}</div>
-            <div class="text-xs text-gray-500">Modified</div>
-          </div>
-          <div>
-            <div class="text-xl font-semibold text-gray-400">{{ scanProgress.files_processed || 0 }}</div>
-            <div class="text-xs text-gray-500">Processed</div>
-          </div>
-        </div>
-
-        <!-- Progress bar (during processing phase) -->
-        <div v-if="scanProgress.phase === 'processing' && scanProgress.files_found > 0">
-          <div class="h-2 bg-[#1a1a1a] rounded-full overflow-hidden">
-            <div
-              class="h-full bg-yellow-500 transition-all duration-300"
-              :style="{ width: `${(scanProgress.files_processed / scanProgress.files_found) * 100}%` }"
-            ></div>
-          </div>
-          <div class="text-xs text-gray-500 mt-1 text-right">
-            {{ scanProgress.files_processed }}/{{ scanProgress.files_found }}
-          </div>
-        </div>
-
-        <!-- Directories scanned (during discovery) -->
-        <div v-if="scanProgress.phase === 'discovering' && scanProgress.dirs_scanned > 0" class="text-xs text-gray-500">
-          Scanned {{ scanProgress.dirs_scanned }} directories...
-        </div>
-      </div>
-    </section>
-
-    <!-- Currently Processing -->
-    <section v-if="queue.current" class="bg-[#171717] rounded-lg p-6 mb-6 border border-blue-500/30">
-      <div class="flex items-center gap-2 mb-4">
-        <div class="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
-        <h2 class="text-lg font-medium">Currently Processing</h2>
-      </div>
-      
-      <div class="bg-[#262626] rounded-lg p-4">
-        <div class="flex items-center justify-between mb-3">
-          <div class="font-medium text-gray-200 truncate">📁 {{ queue.current.filename }}</div>
-          <div class="text-xs text-gray-500 flex-shrink-0 ml-2">
-            {{ formatDuration(queue.current.duration_seconds) }}
-          </div>
-        </div>
-        
-        <!-- Stage indicator -->
-        <div class="flex items-center gap-2 mb-3">
-          <span class="text-sm text-blue-400">{{ formatStageName(queue.current.current_stage) }}</span>
-          <span class="text-xs text-gray-500">(step {{ queue.current.current_stage_num }} of {{ queue.current.total_stages }})</span>
-        </div>
-        
-        <!-- Stage progress bar: shows completed stages + partial for in-progress -->
-        <div class="h-2 bg-[#1a1a1a] rounded-full overflow-hidden flex">
-          <!-- Completed stages (solid) -->
-          <div 
-            class="h-full bg-blue-500 transition-all duration-300"
-            :style="{ width: `${((queue.current.current_stage_num - 1) / queue.current.total_stages) * 100}%` }"
-          ></div>
-          <!-- Current stage (animated/pulsing) -->
-          <div 
-            class="h-full bg-blue-400 animate-pulse"
-            :style="{ width: `${(1 / queue.current.total_stages) * 100}%` }"
-          ></div>
-        </div>
-        
-        <!-- Stage steps -->
-        <div class="flex justify-between mt-2 text-xs">
-          <span 
-            v-for="(stage, idx) in stages" 
-            :key="stage.id"
-            :class="[
-              idx < queue.current.current_stage_num - 1 ? 'text-blue-400' : 
-              idx === queue.current.current_stage_num - 1 ? 'text-blue-300 font-medium' : 'text-gray-600'
-            ]"
-          >
-            {{ stage.short }}
-          </span>
-        </div>
-      </div>
-    </section>
-
-    <!-- Queue Status -->
-    <section class="bg-[#171717] rounded-lg p-6 mb-6">
-      <h2 class="text-lg font-medium mb-4">Enrichment Queue</h2>
-      
-      <div class="grid grid-cols-4 gap-4 mb-4">
-        <div class="text-center">
-          <div class="text-2xl font-semibold text-gray-400">{{ queue.pending }}</div>
-          <div class="text-xs text-gray-500">Pending</div>
-        </div>
-        <div class="text-center">
-          <div class="text-2xl font-semibold text-blue-400">{{ queue.processing }}</div>
-          <div class="text-xs text-gray-500">Processing</div>
-        </div>
-        <div class="text-center">
-          <div class="text-2xl font-semibold text-green-400">{{ queue.complete }}</div>
-          <div class="text-xs text-gray-500">Complete</div>
-        </div>
-        <div class="text-center">
-          <div class="text-2xl font-semibold text-red-400">{{ queue.failed }}</div>
-          <div class="text-xs text-gray-500">Failed</div>
-        </div>
-      </div>
-
+    <!-- Processing Progress (shown when scanning or processing) -->
+    <section v-if="isProcessing" class="bg-[#171717] rounded-sm p-3 mb-4">
       <!-- Overall progress bar -->
-      <div v-if="queue.total > 0" class="mt-4">
-        <div class="flex justify-between text-xs text-gray-500 mb-1">
-          <span>Overall Progress</span>
-          <span>{{ Math.round((queue.complete / queue.total) * 100) }}%</span>
+      <div class="mb-3">
+        <div class="flex justify-between text-xs mb-1.5">
+          <span class="text-gray-300">Processing Files</span>
+          <span class="text-gray-400">{{ queue.complete }} / {{ queue.total }} complete</span>
         </div>
-        <div class="h-2 bg-[#262626] rounded-full overflow-hidden">
-          <div 
-            class="h-full bg-green-500 transition-all"
-            :style="{ width: `${(queue.complete / queue.total) * 100}%` }"
+        <div class="h-1.5 bg-[#262626] rounded-sm overflow-hidden">
+          <div
+            class="h-full bg-orange-500 transition-all duration-300"
+            :style="{ width: `${progressPercent}%` }"
           ></div>
+        </div>
+      </div>
+
+      <!-- Current file with spinner -->
+      <div v-if="queue.current" class="flex items-center gap-2 bg-[#262626] rounded-sm p-2">
+        <div class="w-4 h-4 border-2 border-orange-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
+        <div class="flex-1 min-w-0">
+          <div class="text-xs text-gray-200 truncate">{{ queue.current.filename }}</div>
+          <div class="text-[10px] text-orange-400">{{ formatStageName(queue.current.current_stage) }}</div>
+        </div>
+      </div>
+
+      <!-- Scanning indicator (when discovering files) -->
+      <div v-else-if="scanProgress.phase !== 'idle' && scanProgress.phase !== 'complete'" class="flex items-center gap-2 bg-[#262626] rounded-sm p-2">
+        <div class="w-4 h-4 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
+        <div class="flex-1">
+          <div class="text-xs text-gray-200">{{ formatScanPhase(scanProgress.phase) }}</div>
+          <div v-if="scanProgress.files_found > 0" class="text-[10px] text-yellow-400">
+            Found {{ scanProgress.files_found }} files
+          </div>
+        </div>
+      </div>
+
+      <!-- Pending/Failed counts -->
+      <div class="flex items-center gap-3 mt-2 text-[10px] text-gray-500">
+        <span v-if="queue.pending > 0">{{ queue.pending }} pending</span>
+        <span v-if="queue.failed > 0" class="text-red-400">{{ queue.failed }} failed</span>
+      </div>
+    </section>
+
+    <!-- Idle state - everything complete -->
+    <section v-else-if="queue.total > 0" class="bg-[#171717] rounded-sm p-3 mb-4">
+      <div class="flex items-center gap-2">
+        <div class="w-6 h-6 bg-green-500/20 rounded-sm flex items-center justify-center flex-shrink-0">
+          <svg class="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+          </svg>
+        </div>
+        <div>
+          <div class="text-xs text-gray-200">All files processed</div>
+          <div class="text-[10px] text-gray-500">{{ queue.complete }} files complete</div>
         </div>
       </div>
     </section>
 
-    <!-- Vector Coverage -->
-    <section class="bg-[#171717] rounded-lg p-6 mb-6">
-      <h2 class="text-lg font-medium mb-4">Vector Coverage</h2>
-      
-      <div v-if="vectorStats.models.length === 0" class="text-gray-500 text-sm py-4 text-center">
-        No embeddings generated yet
+    <!-- Empty state -->
+    <section v-else class="bg-[#171717] rounded-sm p-3 mb-4">
+      <div class="text-center text-gray-500 text-xs py-3">
+        No files in queue. Add video files to your watch folder to begin.
       </div>
-      
-      <div v-else class="space-y-3">
-        <div 
-          v-for="model in vectorStats.models" 
-          :key="model.model"
-          class="bg-[#262626] rounded p-3"
+    </section>
+
+    <!-- Details Section (collapsible) -->
+    <div class="border border-[#333] rounded-sm overflow-hidden">
+      <button
+        @click="showDetails = !showDetails"
+        class="w-full px-3 py-2 bg-[#171717] hover:bg-[#1a1a1a] flex items-center justify-between text-xs transition"
+      >
+        <span class="text-gray-300 font-medium">Details</span>
+        <svg
+          class="w-3 h-3 text-gray-500 transition-transform"
+          :class="{ 'rotate-180': showDetails }"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
         >
-          <div class="flex items-center justify-between mb-2">
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-medium text-gray-200">{{ model.name }}</span>
-              <span class="text-xs text-gray-500">{{ model.version }}</span>
-              <span class="text-xs bg-[#333] text-gray-400 px-1.5 py-0.5 rounded">{{ model.dimension }}d</span>
-            </div>
-            <span class="text-sm text-gray-400">
-              <template v-if="model.partial_expected">
-                {{ model.found }} found in {{ model.scanned }} scanned
-              </template>
-              <template v-else>
-                {{ model.found }}/{{ vectorStats.total_scenes }} scenes
-                <span class="text-orange-400">({{ model.coverage }}%)</span>
-              </template>
-              <span v-if="model.total_detected" class="text-gray-500 ml-1">· {{ model.total_detected }} total</span>
-            </span>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </button>
+
+      <div v-show="showDetails" class="bg-[#0d0d0d] border-t border-[#333]">
+        <!-- Vector Coverage -->
+        <div class="p-3 border-b border-[#262626]">
+          <h3 class="text-xs font-medium text-gray-400 mb-2">Vector Coverage</h3>
+
+          <div v-if="vectorStats.models.length === 0" class="text-gray-500 text-[10px]">
+            No embeddings generated yet
           </div>
-          <!-- Progress bar: for partial models, show scanned (teal) + found (orange) -->
-          <div class="h-1.5 bg-[#1a1a1a] rounded-full overflow-hidden">
-            <template v-if="model.partial_expected && vectorStats.total_scenes > 0">
-              <!-- Scanned bar with found overlay -->
-              <div class="h-full flex">
-                <div 
+
+          <div v-else class="space-y-1.5">
+            <div
+              v-for="model in vectorStats.models"
+              :key="model.model"
+              class="flex items-center gap-2"
+            >
+              <span class="text-[10px] text-gray-300 w-20">{{ model.name }}</span>
+              <div class="flex-1 h-1 bg-[#262626] rounded-sm overflow-hidden flex">
+                <!-- Scenes with content (orange) -->
+                <div
                   class="h-full bg-orange-500"
-                  :style="{ width: `${(model.found / vectorStats.total_scenes) * 100}%` }"
+                  :style="{ width: `${model.coverage}%` }"
                 ></div>
-                <div 
-                  class="h-full bg-teal-600"
-                  :style="{ width: `${((model.scanned - model.found) / vectorStats.total_scenes) * 100}%` }"
+                <!-- Scenes scanned but no content - only for partial_expected models (blue) -->
+                <div
+                  v-if="model.partial_expected && getScannedWithoutContent(model) > 0"
+                  class="h-full bg-blue-500/60"
+                  :style="{ width: `${getScannedWithoutContent(model)}%` }"
                 ></div>
               </div>
-            </template>
-            <template v-else>
-              <div 
-                class="h-full bg-orange-500 transition-all"
-                :style="{ width: `${model.coverage}%` }"
-              ></div>
-            </template>
-          </div>
-          <!-- Legend for partial models -->
-          <div v-if="model.partial_expected" class="flex items-center gap-4 mt-1.5 text-xs text-gray-500">
-            <span class="flex items-center gap-1">
-              <span class="w-2 h-2 bg-orange-500 rounded-sm"></span>
-              {{ model.name === 'Faces' ? 'Has faces' : 'Has dialog' }}
-            </span>
-            <span class="flex items-center gap-1">
-              <span class="w-2 h-2 bg-teal-600 rounded-sm"></span>
-              Scanned, none found
-            </span>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Recent Files -->
-    <section class="bg-[#171717] rounded-lg p-6">
-      <h2 class="text-lg font-medium mb-4">Recent Shots</h2>
-      
-      <div class="space-y-2">
-        <div 
-          v-for="file in recentFiles" 
-          :key="file.id"
-          class="flex items-center justify-between bg-[#262626] rounded px-3 py-2"
-        >
-          <div class="flex-1 min-w-0">
-            <div class="font-medium text-sm truncate">{{ file.filename }}</div>
-            <div class="text-xs text-gray-500">
-              {{ formatDuration(file.duration_seconds) }} | 
-              {{ file.width }}x{{ file.height }} | 
-              {{ file.codec }}
+              <span class="text-[10px] text-gray-500 w-12 text-right">{{ model.found }}/{{ vectorStats.total_scenes }}</span>
             </div>
           </div>
-          <div class="text-xs text-gray-500 ml-4 flex-shrink-0">
-            {{ formatDate(file.indexed_at) }}
+
+          <!-- Legend -->
+          <div v-if="hasPartialModels" class="flex items-center gap-3 mt-2 text-[10px] text-gray-500">
+            <span class="flex items-center gap-1">
+              <span class="w-2 h-2 bg-orange-500 rounded-sm"></span>
+              With content
+            </span>
+            <span class="flex items-center gap-1">
+              <span class="w-2 h-2 bg-blue-500/60 rounded-sm"></span>
+              No dialog/faces
+            </span>
+            <span class="flex items-center gap-1">
+              <span class="w-2 h-2 bg-[#262626] rounded-sm"></span>
+              Not processed
+            </span>
           </div>
         </div>
-        
-        <div v-if="recentFiles.length === 0" class="text-gray-500 text-sm py-4 text-center">
-          No files indexed yet
+
+        <!-- Recent Files -->
+        <div class="p-3">
+          <h3 class="text-xs font-medium text-gray-400 mb-2">Recent Files</h3>
+
+          <div class="space-y-1">
+            <div
+              v-for="file in recentFiles"
+              :key="file.id"
+              class="flex items-center justify-between text-[10px]"
+            >
+              <span class="text-gray-300 truncate flex-1 mr-3">{{ file.filename }}</span>
+              <span class="text-gray-500 flex-shrink-0">{{ formatDate(file.indexed_at) }}</span>
+            </div>
+
+            <div v-if="recentFiles.length === 0" class="text-gray-500 text-[10px]">
+              No files indexed yet
+            </div>
+          </div>
         </div>
       </div>
-    </section>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { api } from '../services/api'
 
+const route = useRoute()
+
 const stats = reactive({
-  shots: 0,
+  files: 0,
   scenes: 0,
   faces: 0,
   totalDuration: 0
@@ -301,18 +219,42 @@ const scanProgress = reactive({
 })
 
 const recentFiles = ref([])
+const showDetails = ref(false)
 let pollInterval = null
 
-// Stage definitions for display (includes metadata extraction as first step)
+// Stage definitions for display
 const stages = [
-  { id: 'metadata', name: 'Metadata Extraction', short: 'Metadata' },
-  { id: 'scene_detection', name: 'Scene Detection', short: 'Scenes' },
-  { id: 'clip', name: 'CLIP Embeddings', short: 'CLIP' },
-  { id: 'whisper', name: 'Whisper Transcription', short: 'Whisper' },
-  { id: 'transcript_embed', name: 'Transcript Embeddings', short: 'Transcript' },
-  { id: 'arcface', name: 'Face Detection', short: 'Faces' }
+  { id: 'metadata', name: 'Extracting metadata' },
+  { id: 'scene_detection', name: 'Detecting scenes' },
+  { id: 'clip', name: 'Generating visual embeddings' },
+  { id: 'whisper', name: 'Transcribing audio' },
+  { id: 'transcript_embed', name: 'Embedding transcripts' },
+  { id: 'arcface', name: 'Detecting faces' }
 ]
 
+// Computed
+const isProcessing = computed(() => {
+  return queue.pending > 0 || queue.processing > 0 || (scanProgress.phase !== 'idle' && scanProgress.phase !== 'complete')
+})
+
+const progressPercent = computed(() => {
+  if (queue.total === 0) return 0
+  return Math.round((queue.complete / queue.total) * 100)
+})
+
+const hasPartialModels = computed(() => {
+  return vectorStats.models.some(m => m.partial_expected)
+})
+
+// Calculate percentage of scenes scanned but without content for partial models
+function getScannedWithoutContent(model) {
+  if (!model.partial_expected || vectorStats.total_scenes === 0) return 0
+  const scannedPercent = (model.scanned / vectorStats.total_scenes) * 100
+  const foundPercent = model.coverage
+  return Math.max(0, scannedPercent - foundPercent)
+}
+
+// Methods
 function formatStageName(stageId) {
   if (!stageId || stageId === 'starting') return 'Starting...'
   const stage = stages.find(s => s.id === stageId)
@@ -322,8 +264,8 @@ function formatStageName(stageId) {
 function formatScanPhase(phase) {
   const phases = {
     'idle': '',
-    'discovering': 'Discovering videos...',
-    'processing': 'Adding to database...',
+    'discovering': 'Scanning for video files...',
+    'processing': 'Adding files to database...',
     'checking_missing': 'Checking for removed files...',
     'complete': 'Scan complete'
   }
@@ -350,7 +292,7 @@ function formatDate(dateStr) {
 async function loadStats() {
   try {
     const data = await api.getStats()
-    stats.shots = data.files || 0
+    stats.files = data.files || 0
     stats.scenes = data.scenes || 0
     stats.faces = data.faces || 0
     stats.totalDuration = data.total_duration || 0
@@ -385,7 +327,7 @@ async function loadVectorStats() {
 
 async function loadRecentFiles() {
   try {
-    const data = await api.getFiles(10)
+    const data = await api.getFiles(5)
     recentFiles.value = data.files || []
   } catch (err) {
     console.error('Failed to load recent files:', err)
@@ -408,22 +350,49 @@ async function loadScanProgress() {
   }
 }
 
-onMounted(() => {
+function loadAll() {
   loadStats()
   loadQueue()
   loadVectorStats()
   loadRecentFiles()
   loadScanProgress()
+}
+
+// Reload data when navigating to this page
+watch(() => route.path, (newPath) => {
+  if (newPath === '/report') {
+    loadAll()
+  }
+})
+
+onMounted(() => {
+  loadAll()
+
+  // Track previous processing state to detect completion
+  let prevProcessingCount = 0
 
   // Poll for live updates every 2 seconds
-  pollInterval = setInterval(() => {
-    loadQueue()
-    loadScanProgress()
-    // Also refresh stats when processing or scanning
-    if (queue.processing > 0 || scanProgress.phase !== 'idle') {
+  pollInterval = setInterval(async () => {
+    const wasProcessing = prevProcessingCount > 0
+
+    await Promise.all([loadQueue(), loadScanProgress()])
+
+    const currentlyProcessing = queue.processing > 0 || (scanProgress.phase !== 'idle' && scanProgress.phase !== 'complete')
+
+    // Refresh stats when processing or scanning
+    if (currentlyProcessing) {
       loadStats()
       loadVectorStats()
     }
+
+    // Refresh all data when processing just completed
+    if (wasProcessing && !currentlyProcessing) {
+      loadStats()
+      loadVectorStats()
+      loadRecentFiles()
+    }
+
+    prevProcessingCount = queue.processing + queue.pending
   }, 2000)
 })
 

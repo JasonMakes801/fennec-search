@@ -2,6 +2,35 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   Search Category Colors (centralized for easy tweaking)
+   Each search type has a consistent color used in:
+   - Heading swatches
+   - Filter lozenges
+   - Similarity badge overlays
+   ========================================================================== */
+:root {
+  /* Visual Content - amber/gold */
+  --color-visual: 217 119 6;        /* amber-600 */
+  --color-visual-light: 251 191 36; /* amber-400 */
+
+  /* Dialog - slate/blue-gray */
+  --color-dialog: 71 85 105;        /* slate-600 */
+  --color-dialog-light: 148 163 184; /* slate-400 */
+
+  /* Metadata - neutral gray */
+  --color-metadata: 82 82 91;       /* zinc-600 */
+  --color-metadata-light: 161 161 170; /* zinc-400 */
+
+  /* Face - teal/cyan */
+  --color-face: 13 148 136;         /* teal-600 */
+  --color-face-light: 45 212 191;   /* teal-400 */
+
+  /* Visual Match - violet/purple */
+  --color-visual-match: 124 58 237; /* violet-600 */
+  --color-visual-match-light: 167 139 250; /* violet-400 */
+}
+
 /* Font families */
 @layer base {
   html {
@@ -11,18 +40,18 @@
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
   background: rgba(38, 38, 38, 0.5);
-  border-radius: 4px;
+  border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb {
   background: rgba(107, 114, 128, 0.6);
-  border-radius: 4px;
+  border-radius: 2px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -41,7 +70,7 @@
 
 /* Face box overlay - teal to match face filter lozenge */
 .face-box {
-  @apply absolute border-2 border-teal-500/60 rounded cursor-pointer transition-all;
+  @apply absolute border border-teal-500/60 cursor-pointer transition-all;
 }
 
 .face-box:hover {
@@ -50,11 +79,11 @@
 
 /* Result card */
 .result-card {
-  @apply bg-[#171717] rounded-lg overflow-hidden cursor-pointer transition-all;
+  @apply bg-[#171717] rounded-sm overflow-hidden cursor-pointer transition-all;
 }
 
 .result-card:hover {
-  @apply ring-2 ring-orange-500;
+  @apply ring-1 ring-orange-500;
 }
 
 /* Thumbnail container */
@@ -62,38 +91,86 @@
   @apply relative overflow-hidden;
 }
 
+/* Category swatch (small colored indicator next to headings) */
+.category-swatch {
+  @apply w-2 h-2 rounded-sm flex-shrink-0;
+}
+
+.category-swatch-visual {
+  background-color: rgb(var(--color-visual));
+}
+
+.category-swatch-dialog {
+  background-color: rgb(var(--color-dialog));
+}
+
+.category-swatch-metadata {
+  background-color: rgb(var(--color-metadata));
+}
+
+.category-swatch-face {
+  background-color: rgb(var(--color-face));
+}
+
+.category-swatch-visual-match {
+  background-color: rgb(var(--color-visual-match));
+}
+
 /* Filter lozenge */
 .filter-lozenge {
-  @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-all;
+  @apply inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border transition-all;
 }
 
 .filter-lozenge-visual {
-  @apply bg-amber-700/60 border-amber-600/40 text-amber-200;
+  background-color: rgb(var(--color-visual) / 0.6);
+  border-color: rgb(var(--color-visual) / 0.4);
+  color: rgb(var(--color-visual-light));
 }
 
 .filter-lozenge-dialog {
-  @apply bg-slate-600/60 border-slate-500/40 text-slate-200;
+  background-color: rgb(var(--color-dialog) / 0.6);
+  border-color: rgb(var(--color-dialog) / 0.4);
+  color: rgb(var(--color-dialog-light));
 }
 
 .filter-lozenge-face {
-  @apply bg-teal-700/60 border-teal-600/40 text-teal-200;
+  background-color: rgb(var(--color-face) / 0.6);
+  border-color: rgb(var(--color-face) / 0.4);
+  color: rgb(var(--color-face-light));
 }
 
 .filter-lozenge-visual-match {
-  @apply bg-violet-700/60 border-violet-600/40 text-violet-200;
+  background-color: rgb(var(--color-visual-match) / 0.6);
+  border-color: rgb(var(--color-visual-match) / 0.4);
+  color: rgb(var(--color-visual-match-light));
 }
 
 .filter-lozenge-metadata {
-  @apply bg-gray-700/60 border-gray-600/40 text-gray-300;
+  background-color: rgb(var(--color-metadata) / 0.6);
+  border-color: rgb(var(--color-metadata) / 0.4);
+  color: rgb(var(--color-metadata-light));
 }
 
 .filter-lozenge button {
   @apply hover:text-red-300 ml-0.5 opacity-70 hover:opacity-100;
 }
 
+/* Similarity badges (thumbnail overlays) */
+.similarity-badge-visual {
+  background-color: rgb(var(--color-visual) / 0.85);
+}
+
+.similarity-badge-dialog {
+  background-color: rgb(var(--color-dialog) / 0.85);
+}
+
+.similarity-badge-face {
+  background-color: rgb(var(--color-face) / 0.85);
+}
+
 /* Input styling */
 .input-field {
-  @apply w-full bg-[#262626] text-white px-3 py-2 rounded text-sm focus:outline-none focus:ring-1 focus:ring-orange-500 border border-transparent;
+  @apply w-full bg-[#262626] text-white px-2 py-1.5 rounded-sm text-sm focus:outline-none focus:ring-1 focus:ring-orange-500 border border-transparent;
 }
 
 .input-field::placeholder {
@@ -111,7 +188,7 @@
 
 /* Threshold input */
 .threshold-input {
-  @apply w-12 bg-[#171717] text-white px-1 py-0.5 rounded text-xs text-center focus:outline-none focus:ring-1 focus:ring-orange-500;
+  @apply w-12 bg-[#171717] text-white px-1 py-0.5 rounded-sm text-xs text-center focus:outline-none focus:ring-1 focus:ring-orange-500;
 }
 
 /* Modal backdrop */
@@ -121,12 +198,12 @@
 
 /* Similarity badge */
 .similarity-badge {
-  @apply absolute top-1 left-1 px-1.5 py-0.5 rounded text-xs font-medium text-white;
+  @apply absolute top-1 left-1 px-1 py-0.5 rounded-sm text-[10px] font-medium text-white;
 }
 
 /* Nav link */
 .nav-link {
-  @apply px-3 py-1.5 rounded text-sm transition-colors text-gray-400;
+  @apply px-2 py-1 rounded-sm text-xs transition-colors text-gray-400;
 }
 
 .nav-link:hover {
@@ -149,7 +226,7 @@
 
 /* Metadata display */
 .metadata-item {
-  @apply flex flex-col gap-0.5 p-2 bg-[#0d0d0d] rounded;
+  @apply flex flex-col gap-0.5 p-1.5 bg-[#0d0d0d] rounded-sm;
 }
 
 .metadata-key {
@@ -158,4 +235,15 @@
 
 .metadata-value {
   @apply text-sm text-white;
+}
+
+/* Fade transition for inline feedback */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }

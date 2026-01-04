@@ -44,9 +44,7 @@ CREATE TABLE scenes (
     start_tc FLOAT,
     end_tc FLOAT,
     poster_frame_path TEXT,      -- Center frame (for thumbnails + player initial display)
-    transcript TEXT,             -- Whisper transcript (stored here for full-text search)
-    clip_cluster_id INTEGER,     -- HDBSCAN cluster assignment (-1 = noise/unclustered)
-    clip_cluster_order FLOAT     -- Distance to cluster centroid (for sorting within cluster)
+    transcript TEXT              -- Whisper transcript (stored here for full-text search)
 );
 
 -- Embeddings (model-versioned vectors for search)
@@ -69,8 +67,6 @@ CREATE TABLE faces (
     id SERIAL PRIMARY KEY,
     scene_id INTEGER REFERENCES scenes(id) ON DELETE CASCADE,
     embedding vector(512),  -- ArcFace (fixed 512-dim)
-    cluster_id INTEGER,     -- HDBSCAN cluster assignment (-1 = noise/unclustered)
-    cluster_order FLOAT,    -- Distance to cluster centroid (for sorting within cluster)
     bbox_x FLOAT,
     bbox_y FLOAT,
     bbox_w FLOAT,
@@ -114,6 +110,7 @@ INSERT INTO config (key, value) VALUES
     ('search_threshold_visual', '0.10'),       -- CLIP text-to-image search
     ('search_threshold_visual_match', '0.20'), -- Scene-to-scene visual similarity
     ('search_threshold_face', '0.25'),         -- ArcFace similarity
+    ('search_threshold_transcript', '0.35'),   -- Transcript semantic search
     -- Model registry (versions for partial enrichment)
     ('model_versions', '{
         "clip": {"version": "ViT-B-32-laion2b_s34b_b79k", "dimension": 512},
@@ -121,15 +118,8 @@ INSERT INTO config (key, value) VALUES
     }');
 
 -- Index for embeddings by model (partial indexes for each model type)
--- Note: IVFFlat indexes should be created after data exists for optimal list sizing
 CREATE INDEX idx_embeddings_scene ON embeddings (scene_id);
 CREATE INDEX idx_embeddings_model ON embeddings (model_name);
-
--- Index for face similarity search
-CREATE INDEX ON faces USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-
--- Index for scene clustering
-CREATE INDEX idx_scenes_clip_cluster ON scenes (clip_cluster_id);
 
 -- Index for queue processing
 CREATE INDEX ON enrichment_queue (status, queued_at);

@@ -241,7 +241,7 @@ def get_file_metadata(filepath):
 def scan_folder(folder_path, on_progress=None):
     """
     Scan a folder recursively for video files using os.scandir (faster than os.walk).
-    Returns list of absolute paths.
+    Returns tuple of (list of absolute paths, directories scanned count).
 
     Args:
         folder_path: Root folder to scan
@@ -253,7 +253,7 @@ def scan_folder(folder_path, on_progress=None):
     if not os.path.exists(folder_path):
         print(f"  ⚠️  Folder not found: {folder_path}")
         logger.warning(f"Folder not found: {folder_path}")
-        return videos
+        return videos, 0
 
     def _scan_recursive(path):
         nonlocal dirs_scanned
@@ -288,7 +288,7 @@ def scan_folder(folder_path, on_progress=None):
     _scan_recursive(folder_path)
     logger.info(f"Scan complete: {dirs_scanned} directories, {len(videos)} videos found")
 
-    return videos
+    return videos, dirs_scanned
 
 
 def add_file_to_db(filepath, defer_probe=True):
@@ -513,34 +513,59 @@ def recover_stuck_jobs(timeout_minutes=30):
 def mark_missing_files(watch_folders):
     """
     Mark files as deleted if they no longer exist on disk.
-    Only checks files that are currently in the watched folders.
+    Only checks files in watch folders that are currently accessible.
+
+    Safety: If a watch folder itself is inaccessible (drive offline, unmounted),
+    we skip checking files in that folder to prevent mass soft-deletes.
     """
     conn = get_connection()
     cur = conn.cursor()
-    
+
+    # First, determine which watch folders are actually accessible
+    accessible_folders = []
+    for folder in watch_folders:
+        if os.path.isdir(folder):
+            accessible_folders.append(folder)
+        else:
+            logger.warning(f"Watch folder not accessible, skipping missing check: {folder}")
+
+    if not accessible_folders:
+        logger.warning("No watch folders accessible - skipping missing file check")
+        cur.close()
+        conn.close()
+        return 0
+
     # Get all non-deleted files
     cur.execute("""
-        SELECT id, path FROM files 
+        SELECT id, path FROM files
         WHERE deleted_at IS NULL
     """)
-    
+
     deleted_count = 0
+    skipped_count = 0
     for file_id, path in cur.fetchall():
+        # Check if this file is in an accessible watch folder
+        in_accessible = any(path.startswith(folder) for folder in accessible_folders)
+        if not in_accessible:
+            # File is in an inaccessible folder - skip it
+            skipped_count += 1
+            continue
+
         # Check if file still exists
         if not os.path.exists(path):
-            # Check if this file's parent folder is still being watched
-            in_watched = any(path.startswith(folder) for folder in watch_folders)
-            if in_watched:
-                cur.execute(
-                    "UPDATE files SET deleted_at = NOW() WHERE id = %s",
-                    (file_id,)
-                )
-                deleted_count += 1
-    
+            cur.execute(
+                "UPDATE files SET deleted_at = NOW() WHERE id = %s",
+                (file_id,)
+            )
+            deleted_count += 1
+
+    if skipped_count > 0:
+        logger.info(f"Skipped {skipped_count} files in inaccessible folders")
+
     conn.commit()
     cur.close()
     conn.close()
-    
+
     return deleted_count
 
 
@@ -643,9 +668,9 @@ def run_scan():
             dirs_scanned=total_dirs_scanned
         )
 
-        videos = scan_folder(folder, on_progress=on_progress)
+        videos, dirs_scanned = scan_folder(folder, on_progress=on_progress)
         all_videos.extend(videos)
-        total_dirs_scanned += 1  # At minimum the root folder
+        total_dirs_scanned += dirs_scanned
 
     total_found = len(all_videos)
     logger.info(f"Discovery complete: {total_found} videos found")

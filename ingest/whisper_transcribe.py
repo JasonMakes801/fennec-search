@@ -1,12 +1,13 @@
 """
 Whisper transcription for dialog search.
-Uses OpenAI Whisper (base model) for CPU inference.
+Uses OpenAI Whisper (base model) with MPS on Apple Silicon, CPU fallback.
 """
 
 import whisper
 import subprocess
 import os
 import tempfile
+import torch
 from db import get_connection
 from progress import Spinner
 
@@ -14,17 +15,25 @@ from progress import Spinner
 _model = None
 
 
+def get_device():
+    """Get best available device (MPS on Apple Silicon, else CPU)."""
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def load_model():
     """Load Whisper model (base). Downloads on first run (~150MB)."""
     global _model
-    
+
     if _model is not None:
         return _model
-    
-    print("    Loading Whisper model (first run downloads ~150MB)...")
-    _model = whisper.load_model("base")
-    print("    ✓ Whisper model loaded")
-    
+
+    device = get_device()
+    print(f"    Loading Whisper model on {device} (first run downloads ~150MB)...")
+    _model = whisper.load_model("base", device=device)
+    print(f"    ✓ Whisper model loaded on {device}")
+
     return _model
 
 
@@ -74,7 +83,8 @@ def transcribe_video(video_path, file_id):
             print("    ⚠️ Audio extraction failed")
             return 0
         
-        spinner = Spinner("Transcribing audio (takes ~1x video length)")
+        device = get_device()
+        spinner = Spinner(f"Transcribing audio on {device.upper()}")
         spinner.start()
         
         result = model.transcribe(

@@ -1,9 +1,10 @@
 """
 Transcript embedding for semantic dialog search.
-Uses sentence-transformers (all-MiniLM-L6-v2) for CPU inference.
+Uses sentence-transformers (all-MiniLM-L6-v2) with MPS on Apple Silicon, CPU fallback.
 Enables semantic matching: "1" ↔ "one", "car" ↔ "vehicle", etc.
 """
 
+import torch
 from sentence_transformers import SentenceTransformer
 from db import get_connection
 
@@ -16,17 +17,25 @@ EMBEDDING_DIM = 384
 _model = None
 
 
+def get_device():
+    """Get best available device (MPS on Apple Silicon, else CPU)."""
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def load_model():
     """Load sentence-transformer model. Downloads on first run (~80MB)."""
     global _model
-    
+
     if _model is not None:
         return _model
-    
-    print("    Loading sentence-transformer model (first run downloads ~80MB)...")
-    _model = SentenceTransformer(MODEL_NAME)
-    print("    ✓ Sentence-transformer model loaded")
-    
+
+    device = get_device()
+    print(f"    Loading sentence-transformer model on {device} (first run downloads ~80MB)...")
+    _model = SentenceTransformer(MODEL_NAME, device=device)
+    print(f"    ✓ Sentence-transformer model loaded on {device}")
+
     return _model
 
 
@@ -98,5 +107,6 @@ def embed_transcripts_for_file(file_id):
     cur.close()
     conn.close()
     
-    print(f"    ✓ Embedded {embedded_count} transcript(s)")
+    device = get_device()
+    print(f"    ✓ Embedded {embedded_count} transcript(s) on {device.upper()}")
     return embedded_count
