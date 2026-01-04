@@ -20,22 +20,11 @@ from db import fetch_one, fetch_all, execute
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    import asyncio
-
-    async def warmup_models():
-        """Preload models in background so first search is fast."""
-        import concurrent.futures
-        loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            # Load both models in parallel (they're CPU-bound)
-            await asyncio.gather(
-                loop.run_in_executor(pool, get_clip_model),
-                loop.run_in_executor(pool, get_sentence_model),
-            )
-        print("✓ Models preloaded and ready")
-
-    # Start warmup in background (non-blocking)
-    asyncio.create_task(warmup_models())
+    # Load models synchronously at startup (avoids thread pool issues with PyTorch)
+    print("Loading models...")
+    get_clip_model()
+    get_sentence_model()
+    print("✓ Models preloaded and ready")
     yield
 
 
