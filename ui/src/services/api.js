@@ -1,7 +1,7 @@
 // API service for communicating with FastAPI backend
 import { reactive } from 'vue'
 
-const API_BASE = '/fennec-search/api'
+const API_BASE = '/api'
 
 // Shared server status state - updated by App.vue, read by Search.vue
 export const serverStatus = reactive({

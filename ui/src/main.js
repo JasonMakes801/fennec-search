@@ -9,7 +9,7 @@ import Admin from './pages/Admin.vue'
 import './styles/tailwind.css'
 
 const router = createRouter({
-  history: createWebHistory('/fennec-search/'),
+  history: createWebHistory('/'),
   routes: [
     { path: '/', name: 'search', component: Search },
     { path: '/settings', name: 'settings', component: Settings },

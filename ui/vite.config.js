@@ -3,15 +3,14 @@ import vue from '@vitejs/plugin-vue'
 
 export default defineConfig({
   plugins: [vue()],
-  base: '/fennec-search/',
+  base: '/',
   server: {
     host: '0.0.0.0',
     port: 5173,
     proxy: {
-      '/fennec-search/api': {
+      '/api': {
         target: 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/fennec-search/, '')
+        changeOrigin: true
       }
     }
   },
