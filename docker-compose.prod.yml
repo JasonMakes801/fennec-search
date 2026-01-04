@@ -1,0 +1,74 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: fennec-db
+    environment:
+      POSTGRES_USER: fennec
+      POSTGRES_PASSWORD: fennec
+      POSTGRES_DB: fennec
+    ports:
+      - "5434:5432"
+    volumes:
+      - fennec_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fennec"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  ingest:
+    build: ./ingest
+    container_name: fennec-ingest
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: fennec
+      DB_USER: fennec
+      DB_PASSWORD: fennec
+      PYTHONUNBUFFERED: 1
+      WATCH_FOLDERS: /mnt/media/
+    volumes:
+      - fennec_posters:/app/posters
+      - fennec_models:/root/.cache
+      - /mnt/media:/mnt/media:ro
+
+  server:
+    build: ./server
+    container_name: fennec-server
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DEMO_MODE: "true"
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: fennec
+      DB_USER: fennec
+      DB_PASSWORD: fennec
+      POSTERS_DIR: /app/posters
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - fennec_posters:/app/posters:ro
+      - /mnt/media:/mnt/media:ro
+    ports:
+      - "8000:8000"
+
+  ui:
+    build: ./ui
+    container_name: fennec-ui
+    depends_on:
+      - server
+    ports:
+      - "8080:80"
+    environment:
+      - NODE_ENV=production
+
+volumes:
+  fennec_data:
+  fennec_posters:
+  fennec_models:
