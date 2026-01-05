@@ -634,11 +634,12 @@
                 v-for="(vec, idx) in selectedScene.vectors"
                 :key="idx"
                 class="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-[#1a1a1a] rounded-sm text-[10px]"
-                :title="`${vec.model} ${vec.version} (${vec.dimension}d)`"
+                :title="`${vec.model} ${vec.version} (${vec.dimension}d)${vec.count ? ` - ${vec.count} faces` : ''}`"
               >
                 <span class="text-green-400">✓</span>
                 <span class="text-gray-300">{{ vec.model }}</span>
                 <span class="text-gray-500">{{ vec.dimension }}d</span>
+                <span v-if="vec.count" class="text-amber-400">×{{ vec.count }}</span>
               </span>
             </div>
           </div>

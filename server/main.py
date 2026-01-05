@@ -291,7 +291,16 @@ async def get_scene(scene_index: int):
         {'model': e['model_name'], 'version': e['model_version'], 'dimension': e['dimension']}
         for e in embeddings
     ]
-    
+
+    # Add ArcFace info if faces exist (stored in faces table, not embeddings)
+    if faces:
+        scene['vectors'].append({
+            'model': 'arcface',
+            'version': 'buffalo_l',
+            'dimension': 512,
+            'count': len(faces)
+        })
+
     return scene
 
 
