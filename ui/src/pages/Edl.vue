@@ -51,7 +51,7 @@
 
           <!-- Thumbnail -->
           <img
-            :src="`/api/thumbnail/${scene.sceneId}`"
+            :src="`/api/thumbnail/${scene.sceneId}?f=${encodeURIComponent(scene.filename)}`"
             :alt="scene.filename"
             class="w-20 h-8 object-cover rounded-sm flex-shrink-0"
           />

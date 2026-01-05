@@ -608,7 +608,8 @@ async def get_thumbnail(scene_id: str):
     return FileResponse(
         poster_path,
         media_type=media_type,
-        headers={"Cache-Control": "no-cache, must-revalidate"}
+        # Cache for 1 year - URL includes filename param for cache-busting across re-indexes
+        headers={"Cache-Control": "public, max-age=31536000, immutable"}
     )
 
 

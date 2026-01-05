@@ -307,7 +307,7 @@
           <div class="flex items-center gap-1.5 min-h-[28px] bg-[#262626] rounded-sm px-1.5">
             <span v-if="!visualMatch" class="text-gray-600 text-[10px]">Click thumbnail to match</span>
             <template v-else>
-              <img :src="getSceneThumbnail(visualMatch.sceneId)" class="h-6 rounded-sm border border-violet-500" />
+              <img :src="getSceneThumbnail(visualMatch.sceneId, visualMatch.filename)" class="h-6 rounded-sm border border-violet-500" />
               <span class="text-[10px] text-gray-300">{{ visualMatch.filename ? `${formatFilename(visualMatch.filename, 12)} #${visualMatch.sceneIndex}` : `Scene ${visualMatch.sceneIndex}` }}</span>
               <button @click="clearVisualMatch" class="text-red-400 hover:text-red-300 text-[10px] ml-auto">×</button>
             </template>
@@ -404,7 +404,7 @@
       >
         <div class="thumbnail-container" :ref="el => thumbnailRefs[idx] = el">
           <img
-            :src="getSceneThumbnail(scene.id)"
+            :src="getSceneThumbnail(scene.id, scene.filename)"
             :alt="`Scene ${scene.scene_index}`"
             class="w-full"
             style="aspect-ratio: 864/360;"
@@ -433,7 +433,7 @@
           </span>
           <!-- Match button -->
           <button
-            @click.stop="setVisualMatch(scene.id, scene.scene_index)"
+            @click.stop="setVisualMatch(scene.id, scene.scene_index, scene.filename)"
             class="absolute bottom-1 right-1 bg-orange-600/80 hover:bg-orange-500 text-white text-[10px] px-1 py-0.5 rounded-sm opacity-0 group-hover:opacity-100 transition-opacity"
             title="Find visually similar scenes"
           >
@@ -1183,9 +1183,10 @@ function formatDate(dateStr) {
   })
 }
 
-function getSceneThumbnail(sceneId) {
-  // Use the scene's database ID (not scene_index) for globally unique thumbnails
-  return `/api/thumbnail/${sceneId}`
+function getSceneThumbnail(sceneId, filename = '') {
+  // Include filename for cache-busting across re-indexes (scene_id alone can be reused)
+  const params = filename ? `?f=${encodeURIComponent(filename)}` : ''
+  return `/api/thumbnail/${sceneId}${params}`
 }
 
 function getVideoUrl(fileId) {
@@ -1580,7 +1581,7 @@ function showFaceSelectModal(sceneId, sceneIndex, faces, filename) {
         if (canvas) drawFaceCrop(canvas, img, bbox, 80)
       })
     }
-    img.src = getSceneThumbnail(sceneId)
+    img.src = getSceneThumbnail(sceneId, filename)
   })
 }
 
@@ -1596,7 +1597,7 @@ function selectFace(sceneId, sceneIndex, faceId, bbox, filename) {
       const img = new Image()
       img.crossOrigin = 'anonymous'
       img.onload = () => drawFaceCrop(faceCanvas.value, img, bbox, 28)
-      img.src = getSceneThumbnail(sceneId)
+      img.src = getSceneThumbnail(sceneId, filename)
     }
   })
 
