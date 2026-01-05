@@ -1390,7 +1390,7 @@ function addColorTerm(term) {
   const current = filters.visual.trim()
   filters.visual = current ? `${current}, ${term}` : term
   addFilter('visual')
-  search()  // Intentional click action - search immediately
+  // Don't auto-search - user may be building a multi-filter query
 }
 
 let searchAbortController = null
@@ -1687,7 +1687,7 @@ function handleKeydown(e) {
 function toggleDialogMode() {
   if (!serverStatus.sentenceLoaded) return
   dialogSearchMode.value = dialogSearchMode.value === 'semantic' ? 'keyword' : 'semantic'
-  if (filters.dialog) search()  // Re-search with new mode
+  // Don't auto-search - user may be building a multi-filter query
 }
 
 async function loadThresholds() {
