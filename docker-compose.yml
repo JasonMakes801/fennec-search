@@ -1,3 +1,11 @@
+# Fennec Search - Local Development (macOS)
+#
+# Usage: docker compose up
+# UI: http://localhost:8080
+# API: http://localhost:8000
+#
+# Edit WATCH_FOLDERS and volume mounts below to point to your media.
+
 services:
   db:
     image: pgvector/pgvector:pg16
@@ -31,14 +39,13 @@ services:
       DB_USER: fennec
       DB_PASSWORD: fennec
       PYTHONUNBUFFERED: 1
-      # Comma-separated list of folders to scan for video files
-      # These paths must exist inside the container (see volume mounts below)
+      # >>> EDIT THIS: path(s) to your media files (comma-separated)
       WATCH_FOLDERS: /Volumes/BackupOne/FennecSearchMedia2/
     volumes:
       - ./ingest:/app
       - fennec_posters:/app/posters
       - fennec_models:/root/.cache
-      # macOS media paths (same inside container so your paths just work)
+      # macOS: mount common paths so container paths match host paths
       - /Users:/Users:ro
       - /Volumes:/Volumes:ro
 
@@ -61,7 +68,7 @@ services:
     volumes:
       - ./server:/app
       - fennec_posters:/app/posters:ro
-      # macOS media paths (same inside container so your paths just work)
+      # macOS: mount common paths so container paths match host paths
       - /Users:/Users:ro
       - /Volumes:/Volumes:ro
     ports:
