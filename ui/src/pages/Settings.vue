@@ -3,7 +3,7 @@
     <h1 class="text-lg font-semibold mb-4">Settings</h1>
 
     <!-- Indexer Control -->
-    <section class="bg-[#171717] rounded-sm p-3 mb-4">
+    <section v-if="!demoMode" class="bg-[#171717] rounded-sm p-3 mb-4">
       <h2 class="text-sm font-medium mb-3">Indexer Control</h2>
       <div class="flex items-center justify-between">
         <div>
@@ -25,7 +25,7 @@
     </section>
 
     <!-- Watch Folders (read-only, configured in docker-compose.yml) -->
-    <section class="bg-[#171717] rounded-sm p-3 mb-4">
+    <section v-if="!demoMode" class="bg-[#171717] rounded-sm p-3 mb-4">
       <div class="flex items-center justify-between mb-3">
         <h2 class="text-sm font-medium">Watch Folders</h2>
         <div class="flex items-center gap-2">
@@ -80,7 +80,7 @@
     </section>
 
     <!-- Model Settings -->
-    <section class="bg-[#171717] rounded-sm p-3 mb-4">
+    <section v-if="!demoMode" class="bg-[#171717] rounded-sm p-3 mb-4">
       <h2 class="text-sm font-medium mb-3">Enrichment Models</h2>
       <p class="text-[10px] text-gray-500 mb-3">Toggle which models run during enrichment</p>
 
@@ -211,7 +211,7 @@
     </section>
 
     <!-- Poster Settings -->
-    <section class="bg-[#171717] rounded-sm p-3">
+    <section v-if="!demoMode" class="bg-[#171717] rounded-sm p-3">
       <h2 class="text-sm font-medium mb-3">Poster Settings</h2>
       <p class="text-[10px] text-gray-500 mb-3">Settings for scene poster frame extraction (WebP format)</p>
 
@@ -245,7 +245,7 @@
     </section>
 
     <!-- CLI Commands Reference -->
-    <section class="bg-[#171717] rounded-sm p-3">
+    <section v-if="!demoMode" class="bg-[#171717] rounded-sm p-3">
       <h2 class="text-sm font-medium mb-3">CLI Commands</h2>
       <p class="text-[10px] text-gray-500 mb-3">Use these commands in your terminal for maintenance operations</p>
 
@@ -271,6 +271,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { api } from '../services/api'
 
+const demoMode = ref(false)
 const indexerState = ref('unknown')
 const watchFolders = ref([])
 const refreshingFolders = ref(false)
@@ -405,7 +406,17 @@ async function saveThresholds() {
   }
 }
 
+async function loadAdminStatus() {
+  try {
+    const status = await api.getAdminStatus()
+    demoMode.value = status.demo_mode
+  } catch (err) {
+    console.error('Failed to load admin status:', err)
+  }
+}
+
 onMounted(() => {
+  loadAdminStatus()
   loadConfig()
   loadWatchFolders()
 })
