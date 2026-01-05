@@ -35,7 +35,7 @@
             :disabled="!serverStatus.clipLoaded"
             class="input-field"
             :class="{ 'opacity-50 cursor-not-allowed': !serverStatus.clipLoaded }"
-            @input="debouncedSearch"
+            @keyup.enter="search"
           />
           <!-- Color swatches toggle -->
           <div class="mt-1">
@@ -84,12 +84,12 @@
               />
             </span>
           </label>
-          <input 
+          <input
             type="text"
             v-model="filters.dialog"
             :placeholder="dialogSearchMode === 'semantic' ? 'find similar meaning...' : 'exact words...'"
             class="input-field"
-            @input="debouncedSearch"
+            @keyup.enter="search"
           />
           <!-- Search mode toggle -->
           <div class="flex items-center gap-1.5 mt-1">
@@ -762,7 +762,6 @@ import {
 
 // Constants
 const PAGE_SIZE = 40
-const DEBOUNCE_MS = 700  // Longer debounce for better UX with network latency
 
 // State
 const loading = ref(false)
@@ -1391,16 +1390,10 @@ function addColorTerm(term) {
   const current = filters.visual.trim()
   filters.visual = current ? `${current}, ${term}` : term
   addFilter('visual')
-  debouncedSearch()
+  search()  // Intentional click action - search immediately
 }
 
-let debounceTimer = null
 let searchAbortController = null
-
-function debouncedSearch() {
-  clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => search(), DEBOUNCE_MS)
-}
 
 async function loadScenes(reset = true) {
   if (reset) {
@@ -1694,7 +1687,7 @@ function handleKeydown(e) {
 function toggleDialogMode() {
   if (!serverStatus.sentenceLoaded) return
   dialogSearchMode.value = dialogSearchMode.value === 'semantic' ? 'keyword' : 'semantic'
-  if (filters.dialog) debouncedSearch()
+  if (filters.dialog) search()  // Re-search with new mode
 }
 
 async function loadThresholds() {
