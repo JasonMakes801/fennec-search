@@ -8,6 +8,10 @@
   <strong>Self-hosted video search using natural language, faces, and spoken dialog.</strong>
 </p>
 
+<p align="center">
+  <a href="https://fennec.jasongpeterson.com"><strong>Live Demo</strong></a>
+</p>
+
 Find any moment in your media library. Fennec enriches your videos with AI models (CLIP, Whisper, ArcFace) and stores embeddings in Postgres with pgvector for fast similarity search.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
@@ -30,10 +34,10 @@ Find any moment in your media library. Fennec enriches your videos with AI model
 
 ### Prerequisites
 
-- macOS with Docker Desktop
+- Docker (macOS or Linux)
 - ~10GB disk space for ML models (downloaded on first run)
 
-> **Note:** Linux support is planned for a future release.
+> **Linux deployment:** See [DEPLOYMENT.md](DEPLOYMENT.md) for production setup with SSL.
 
 ### 1. Clone and Start
 
@@ -243,7 +247,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ## Roadmap
 
-- [ ] Linux support
+- [x] Linux support
 - [ ] GPU acceleration
 - [ ] Additional embedding models
 - [ ] Batch export/import
