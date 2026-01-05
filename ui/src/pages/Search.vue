@@ -1679,9 +1679,7 @@ function handleKeydown(e) {
     closeModal()
     closeFaceModal()
   }
-  if (e.key === 'Enter' && !selectedScene.value) {
-    search()
-  }
+  // Enter key search is handled by @keyup.enter on the input fields
 }
 
 function toggleDialogMode() {
