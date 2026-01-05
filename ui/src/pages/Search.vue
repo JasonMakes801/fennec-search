@@ -762,7 +762,7 @@ import {
 
 // Constants
 const PAGE_SIZE = 40
-const DEBOUNCE_MS = 400
+const DEBOUNCE_MS = 700  // Longer debounce for better UX with network latency
 
 // State
 const loading = ref(false)
@@ -1395,6 +1395,8 @@ function addColorTerm(term) {
 }
 
 let debounceTimer = null
+let searchAbortController = null
+
 function debouncedSearch() {
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(() => search(), DEBOUNCE_MS)
@@ -1423,20 +1425,26 @@ async function loadScenes(reset = true) {
 }
 
 async function search() {
+  // Cancel any in-flight search request
+  if (searchAbortController) {
+    searchAbortController.abort()
+  }
+  searchAbortController = new AbortController()
+
   // Track filters
   if (filters.visual) addFilter('visual')
   else filterOrder.value = filterOrder.value.filter(t => t !== 'visual')
-  
+
   if (filters.dialog) addFilter('dialog')
   else filterOrder.value = filterOrder.value.filter(t => t !== 'dialog')
-  
+
   const hasFilters = filters.visual || filters.dialog || faceFilter.value || visualMatch.value || metadataFilters.value.length > 0
-  
+
   if (!hasFilters) {
     loadScenes(true)
     return
   }
-  
+
   isSearchMode.value = true
   loading.value = true
   results.value = []
@@ -1495,9 +1503,11 @@ async function search() {
       }
     }
     
-    const data = await api.search(params)
+    const data = await api.search(params, searchAbortController.signal)
     results.value = data.results || []
   } catch (err) {
+    // Ignore abort errors (expected when user types quickly)
+    if (err.name === 'AbortError') return
     console.error('Search failed:', err)
   } finally {
     loading.value = false

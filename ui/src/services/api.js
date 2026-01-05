@@ -12,24 +12,26 @@ export const serverStatus = reactive({
 })
 
 async function fetchJSON(url, options = {}) {
+  const { signal, ...restOptions } = options
   const response = await fetch(API_BASE + url, {
     headers: {
       'Content-Type': 'application/json',
-      ...options.headers
+      ...restOptions.headers
     },
-    ...options
+    signal,
+    ...restOptions
   })
-  
+
   if (!response.ok) {
     throw new Error(`API error: ${response.status}`)
   }
-  
+
   return response.json()
 }
 
 export const api = {
-  // Search with combined filters
-  async search(params) {
+  // Search with combined filters (supports AbortController signal)
+  async search(params, signal = null) {
     const query = new URLSearchParams()
     if (params.visual) query.set('visual', params.visual)
     if (params.visual_threshold) query.set('visual_threshold', params.visual_threshold)
@@ -55,8 +57,8 @@ export const api = {
     if (params.fps_min !== undefined) query.set('fps_min', params.fps_min)
     if (params.fps_max !== undefined) query.set('fps_max', params.fps_max)
     if (params.codec) query.set('codec', params.codec)
-    
-    return fetchJSON(`/search?${query}`)
+
+    return fetchJSON(`/search?${query}`, { signal })
   },
   
   // Generic GET for any endpoint
