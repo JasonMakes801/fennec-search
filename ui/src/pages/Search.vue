@@ -28,15 +28,24 @@
               />
             </span>
           </label>
-          <input
-            type="text"
-            v-model="filters.visual"
-            :placeholder="serverStatus.clipLoaded ? 'robot, explosion, outdoor scene...' : 'Loading CLIP model...'"
-            :disabled="!serverStatus.clipLoaded"
-            class="input-field"
-            :class="{ 'opacity-50 cursor-not-allowed': !serverStatus.clipLoaded }"
-            @keyup.enter="search"
-          />
+          <div class="flex gap-1.5 h-[34px]">
+            <input
+              type="text"
+              v-model="filters.visual"
+              :placeholder="serverStatus.clipLoaded ? 'robot, explosion, outdoor scene...' : 'Loading CLIP model...'"
+              :disabled="!serverStatus.clipLoaded"
+              class="input-field flex-1 h-full"
+              :class="{ 'opacity-50 cursor-not-allowed': !serverStatus.clipLoaded }"
+              @keyup.enter="addVisualFilter"
+            />
+            <button
+              @click="addVisualFilter"
+              :disabled="!filters.visual || !serverStatus.clipLoaded"
+              class="px-2 bg-orange-600 hover:bg-orange-500 rounded-sm text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed h-full"
+            >
+              +
+            </button>
+          </div>
           <!-- Color swatches toggle -->
           <div class="mt-1">
             <button
@@ -84,13 +93,22 @@
               />
             </span>
           </label>
-          <input
-            type="text"
-            v-model="filters.dialog"
-            :placeholder="dialogSearchMode === 'semantic' ? 'find similar meaning...' : 'exact words...'"
-            class="input-field"
-            @keyup.enter="search"
-          />
+          <div class="flex gap-1.5 h-[34px]">
+            <input
+              type="text"
+              v-model="filters.dialog"
+              :placeholder="dialogSearchMode === 'semantic' ? 'find similar meaning...' : 'exact words...'"
+              class="input-field flex-1 h-full"
+              @keyup.enter="addDialogFilter"
+            />
+            <button
+              @click="addDialogFilter"
+              :disabled="!filters.dialog"
+              class="px-2 bg-orange-600 hover:bg-orange-500 rounded-sm text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed h-full"
+            >
+              +
+            </button>
+          </div>
           <!-- Search mode toggle -->
           <div class="flex items-center gap-1.5 mt-1">
             <span
@@ -127,138 +145,126 @@
         </div>
 
         <!-- Metadata Filter -->
-        <div class="control-group flex-1 min-w-[320px]">
+        <div class="control-group flex-1 min-w-[200px]">
           <label class="control-label">
             <span class="flex items-center gap-1.5">
               <span class="category-swatch category-swatch-metadata"></span>
               Metadata
             </span>
           </label>
-          <div class="flex flex-col gap-1.5">
-            <!-- Active metadata filters as lozenges -->
-            <div
-              class="flex flex-wrap items-center gap-1 min-h-[28px] bg-[#262626] rounded-sm px-1.5 py-1"
+          <!-- Main row: lozenge container (same height as input-field) -->
+          <div class="flex items-center gap-1 bg-[#262626] rounded-sm px-2 h-[34px] overflow-x-auto">
+            <template v-if="metadataFilters.length === 0">
+              <span class="text-gray-600 text-sm">No filters</span>
+            </template>
+            <span
+              v-for="(mf, idx) in metadataFilters"
+              :key="idx"
+              class="inline-flex items-center gap-0.5 bg-orange-600/30 text-orange-300 text-[10px] px-1.5 py-0.5 rounded-sm flex-shrink-0"
             >
-              <template v-if="metadataFilters.length === 0">
-                <span class="text-gray-600 text-[10px]">Add filters below</span>
-              </template>
-              <span
-                v-for="(mf, idx) in metadataFilters"
-                :key="idx"
-                class="inline-flex items-center gap-0.5 bg-orange-600/30 text-orange-300 text-[10px] px-1.5 py-0.5 rounded-sm"
-              >
-                <span class="font-medium">{{ mf.label }}</span>
-                <button @click="removeMetadataFilter(idx)" class="hover:text-white">×</button>
-              </span>
-            </div>
-            <!-- Add new filter row -->
-            <div class="flex items-center gap-1.5">
-              <select
-                v-model="newMeta.key"
-                class="bg-[#262626] rounded-sm px-1.5 py-1 text-xs text-gray-300 border-none outline-none appearance-none cursor-pointer hover:bg-[#333] pr-5"
-                style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2210%22 height=%2210%22 viewBox=%220 0 12 12%22%3E%3Cpath fill=%22%239ca3af%22 d=%22M3 4.5L6 8l3-3.5H3z%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 6px center;"
-                @change="onMetaKeyChange"
-              >
-                <option value="">+ Add filter</option>
-                <option value="path">Path</option>
-                <option value="tc">Timecode</option>
-                <option value="duration">Duration</option>
-                <option value="resolution">Resolution</option>
-                <option value="fps">Frame Rate</option>
-                <option value="codec">Codec</option>
-              </select>
-              <!-- Dynamic input based on key -->
-              <template v-if="newMeta.key === 'path' || newMeta.key === 'codec'">
-                <input 
-                  type="text"
-                  v-model="newMeta.value"
-                  :placeholder="newMeta.key === 'path' ? 'path substring...' : 'h264, hevc...'"
-                  class="flex-1 input-field text-sm"
-                  @keydown.enter="addMetadataFilter"
-                />
-              </template>
-              <template v-else-if="newMeta.key === 'tc'">
-                <div class="flex flex-col gap-1">
-                  <div class="flex items-center gap-2">
-                    <span class="text-gray-500 text-xs w-6">In</span>
-                    <input 
-                      type="text"
-                      v-model="newMeta.min"
-                      placeholder="HH:MM:SS:FF"
-                      class="w-32 input-field font-mono text-xs text-center"
-                      @blur="newMeta.min = normalizeSmpteInput(newMeta.min)"
-                    />
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-gray-500 text-xs w-6">Out</span>
-                    <input 
-                      type="text"
-                      v-model="newMeta.max"
-                      placeholder="HH:MM:SS:FF"
-                      class="w-32 input-field font-mono text-xs text-center"
-                      @blur="newMeta.max = normalizeSmpteInput(newMeta.max)"
-                      @keydown.enter="addMetadataFilter"
-                    />
-                  </div>
-                </div>
-              </template>
-              <template v-else-if="newMeta.key === 'duration'">
-                <input 
-                  type="text"
-                  v-model="newMeta.min"
-                  placeholder="0"
-                  class="w-16 input-field font-mono text-xs text-center"
-                />
-                <span class="text-gray-500">-</span>
-                <input 
-                  type="text"
-                  v-model="newMeta.max"
-                  placeholder="∞"
-                  class="w-16 input-field font-mono text-xs text-center"
-                  @keydown.enter="addMetadataFilter"
-                />
-              </template>
-              <template v-else-if="newMeta.key === 'resolution'">
-                <input 
-                  type="text"
-                  v-model="newMeta.min"
-                  placeholder="1280"
-                  class="w-16 input-field font-mono text-xs text-center"
-                />
-                <span class="text-gray-500">×</span>
-                <input 
-                  type="text"
-                  v-model="newMeta.max"
-                  placeholder="720"
-                  class="w-16 input-field font-mono text-xs text-center"
-                  @keydown.enter="addMetadataFilter"
-                />
-                <span class="text-gray-500 text-xs">min</span>
-              </template>
-              <template v-else-if="newMeta.key === 'fps'">
-                <input 
-                  type="text"
-                  v-model="newMeta.min"
-                  placeholder="24"
-                  class="w-14 input-field font-mono text-xs text-center"
-                />
-                <span class="text-gray-500">-</span>
-                <input 
-                  type="text"
-                  v-model="newMeta.max"
-                  placeholder="60"
-                  class="w-14 input-field font-mono text-xs text-center"
-                  @keydown.enter="addMetadataFilter"
-                />
-              </template>
-              <button
-                v-if="newMeta.key"
-                @click="addMetadataFilter"
-                class="px-1.5 py-0.5 bg-orange-600 hover:bg-orange-500 rounded-sm text-[10px]"
-              >
-                Add
-              </button>
-            </div>
+              <span class="font-medium">{{ mf.label }}</span>
+              <button @click="removeMetadataFilter(idx)" class="hover:text-white">×</button>
+            </span>
+          </div>
+          <!-- Secondary: filter type selector and inputs -->
+          <div class="flex items-center gap-1.5 mt-1">
+            <select
+              v-model="newMeta.key"
+              class="bg-[#333] rounded-sm px-1.5 py-0.5 text-[10px] text-gray-300 border-none outline-none appearance-none cursor-pointer hover:bg-[#444] pr-4"
+              style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%228%22 height=%228%22 viewBox=%220 0 12 12%22%3E%3Cpath fill=%22%239ca3af%22 d=%22M3 4.5L6 8l3-3.5H3z%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 4px center;"
+              @change="onMetaKeyChange"
+            >
+              <option value="">+ Add</option>
+              <option value="path">Path</option>
+              <option value="tc">Timecode</option>
+              <option value="duration">Duration</option>
+              <option value="resolution">Resolution</option>
+              <option value="fps">Frame Rate</option>
+              <option value="codec">Codec</option>
+            </select>
+            <template v-if="newMeta.key === 'path' || newMeta.key === 'codec'">
+              <input
+                type="text"
+                v-model="newMeta.value"
+                :placeholder="newMeta.key === 'path' ? 'path...' : 'codec...'"
+                class="flex-1 bg-[#262626] rounded-sm px-1.5 py-0.5 text-[10px] text-white"
+                @keydown.enter="addMetadataFilter"
+              />
+            </template>
+            <template v-else-if="newMeta.key === 'tc'">
+              <input
+                type="text"
+                v-model="newMeta.min"
+                placeholder="In TC"
+                class="w-20 bg-[#262626] rounded-sm px-1 py-0.5 text-[10px] font-mono text-center text-white"
+                @blur="newMeta.min = normalizeSmpteInput(newMeta.min)"
+              />
+              <span class="text-gray-500 text-[10px]">-</span>
+              <input
+                type="text"
+                v-model="newMeta.max"
+                placeholder="Out TC"
+                class="w-20 bg-[#262626] rounded-sm px-1 py-0.5 text-[10px] font-mono text-center text-white"
+                @blur="newMeta.max = normalizeSmpteInput(newMeta.max)"
+                @keydown.enter="addMetadataFilter"
+              />
+            </template>
+            <template v-else-if="newMeta.key === 'duration'">
+              <input
+                type="text"
+                v-model="newMeta.min"
+                placeholder="0"
+                class="w-10 bg-[#262626] rounded-sm px-1 py-0.5 text-[10px] font-mono text-center text-white"
+              />
+              <span class="text-gray-500 text-[10px]">-</span>
+              <input
+                type="text"
+                v-model="newMeta.max"
+                placeholder="∞"
+                class="w-10 bg-[#262626] rounded-sm px-1 py-0.5 text-[10px] font-mono text-center text-white"
+                @keydown.enter="addMetadataFilter"
+              />
+              <span class="text-gray-500 text-[10px]">s</span>
+            </template>
+            <template v-else-if="newMeta.key === 'resolution'">
+              <input
+                type="text"
+                v-model="newMeta.min"
+                placeholder="W"
+                class="w-10 bg-[#262626] rounded-sm px-1 py-0.5 text-[10px] font-mono text-center text-white"
+              />
+              <span class="text-gray-500 text-[10px]">×</span>
+              <input
+                type="text"
+                v-model="newMeta.max"
+                placeholder="H"
+                class="w-10 bg-[#262626] rounded-sm px-1 py-0.5 text-[10px] font-mono text-center text-white"
+                @keydown.enter="addMetadataFilter"
+              />
+            </template>
+            <template v-else-if="newMeta.key === 'fps'">
+              <input
+                type="text"
+                v-model="newMeta.min"
+                placeholder="24"
+                class="w-8 bg-[#262626] rounded-sm px-1 py-0.5 text-[10px] font-mono text-center text-white"
+              />
+              <span class="text-gray-500 text-[10px]">-</span>
+              <input
+                type="text"
+                v-model="newMeta.max"
+                placeholder="60"
+                class="w-8 bg-[#262626] rounded-sm px-1 py-0.5 text-[10px] font-mono text-center text-white"
+                @keydown.enter="addMetadataFilter"
+              />
+            </template>
+            <button
+              v-if="newMeta.key"
+              @click="addMetadataFilter"
+              class="px-1.5 py-0.5 bg-orange-600 hover:bg-orange-500 rounded-sm text-[10px] font-medium"
+            >
+              +
+            </button>
           </div>
         </div>
 
@@ -278,11 +284,11 @@
               />
             </span>
           </label>
-          <div class="flex items-center gap-1.5 min-h-[28px] bg-[#262626] rounded-sm px-1.5">
-            <span v-if="!faceFilter" class="text-gray-600 text-[10px]">Click face in results</span>
+          <div class="flex items-center gap-1.5 bg-[#262626] rounded-sm px-2 h-[34px]">
+            <span v-if="!faceFilter" class="text-gray-600 text-sm">Click face in results</span>
             <template v-else>
               <canvas ref="faceCanvas" width="24" height="24" class="rounded-sm border border-teal-500"></canvas>
-              <span class="text-[10px] text-gray-300">{{ faceFilter.filename ? `${formatFilename(faceFilter.filename, 12)} #${faceFilter.sceneIndex}` : `Scene ${faceFilter.sceneIndex}` }}</span>
+              <span class="text-[10px] text-gray-300 truncate">{{ faceFilter.filename ? `${formatFilename(faceFilter.filename, 12)} #${faceFilter.sceneIndex}` : `Scene ${faceFilter.sceneIndex}` }}</span>
               <button @click="clearFaceFilter" class="text-red-400 hover:text-red-300 text-[10px] ml-auto">×</button>
             </template>
           </div>
@@ -304,40 +310,47 @@
               />
             </span>
           </label>
-          <div class="flex items-center gap-1.5 min-h-[28px] bg-[#262626] rounded-sm px-1.5">
-            <span v-if="!visualMatch" class="text-gray-600 text-[10px]">Click thumbnail to match</span>
+          <div class="flex items-center gap-1.5 bg-[#262626] rounded-sm px-2 h-[34px]">
+            <span v-if="!visualMatch" class="text-gray-600 text-sm">Click thumbnail to match</span>
             <template v-else>
               <img :src="getSceneThumbnail(visualMatch.sceneId, visualMatch.filename)" class="h-6 rounded-sm border border-violet-500" />
-              <span class="text-[10px] text-gray-300">{{ visualMatch.filename ? `${formatFilename(visualMatch.filename, 12)} #${visualMatch.sceneIndex}` : `Scene ${visualMatch.sceneIndex}` }}</span>
+              <span class="text-[10px] text-gray-300 truncate">{{ visualMatch.filename ? `${formatFilename(visualMatch.filename, 12)} #${visualMatch.sceneIndex}` : `Scene ${visualMatch.sceneIndex}` }}</span>
               <button @click="clearVisualMatch" class="text-red-400 hover:text-red-300 text-[10px] ml-auto">×</button>
             </template>
           </div>
         </div>
 
-        <!-- Actions -->
-        <div class="control-group flex items-end">
-          <div class="flex gap-1.5">
-            <button
-              @click="resetFilters"
-              class="px-2 py-1 bg-[#262626] hover:bg-[#333] rounded-sm text-xs transition"
-            >
-              Reset
-            </button>
-            <button
-              @click="search"
-              class="px-3 py-1 bg-orange-500 hover:bg-orange-600 rounded-sm text-xs font-medium transition"
-            >
-              Search
-            </button>
-          </div>
-        </div>
+      </div>
+
+      <!-- Actions row -->
+      <div class="flex gap-2 mt-2">
+        <button
+          @click="resetFilters"
+          class="px-2 py-1 bg-[#262626] hover:bg-[#333] rounded-sm text-xs transition"
+        >
+          Reset
+        </button>
+        <button
+          @click="search"
+          :disabled="!hasActiveFilters"
+          :class="[
+            'px-3 py-1 rounded-sm text-xs font-medium transition',
+            !hasActiveFilters
+              ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+              : 'bg-orange-500 hover:bg-orange-600'
+          ]"
+        >
+          Refresh
+        </button>
       </div>
 
       <!-- Filter Chain (Lozenges) -->
       <div v-if="activeFilters.length > 0" class="mt-3 flex flex-wrap items-center gap-1.5">
         <span class="text-xs text-gray-500">Filters:</span>
         <template v-for="(filter, idx) in activeFilters" :key="filter.type">
-          <span v-if="idx > 0" class="text-gray-500">-></span>
+          <svg v-if="idx > 0" class="w-3 h-3 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+          </svg>
           <span :class="['filter-lozenge', `filter-lozenge-${filter.type}`]">
             <span>{{ filter.label }}</span>
             <button @click="removeFilter(filter.type)">x</button>
@@ -828,6 +841,14 @@ const colorSwatches = [
 ]
 
 // Computed
+const hasActiveFilters = computed(() =>
+  filters.visual ||
+  filters.dialog ||
+  faceFilter.value ||
+  visualMatch.value ||
+  metadataFilters.value.length > 0
+)
+
 const resultCount = computed(() => {
   if (isSearchMode.value) {
     return `${results.value.length} results`
@@ -1389,8 +1410,19 @@ function getSimilarityClass(sim) {
 function addColorTerm(term) {
   const current = filters.visual.trim()
   filters.visual = current ? `${current}, ${term}` : term
+  // Just add to field - user presses Add to search
+}
+
+function addVisualFilter() {
+  if (!filters.visual) return
   addFilter('visual')
-  // Don't auto-search - user may be building a multi-filter query
+  search()
+}
+
+function addDialogFilter() {
+  if (!filters.dialog) return
+  addFilter('dialog')
+  search()
 }
 
 let searchAbortController = null
@@ -1734,3 +1766,4 @@ watch(() => serverStatus.sentenceLoaded, (loaded) => {
   }
 })
 </script>
+

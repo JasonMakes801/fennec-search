@@ -1,6 +1,9 @@
 # Context docs (not for public repo)
 AGENTS.md
 
+# Local scripts (contain server details)
+scripts/geolocate_visitors.sh
+
 # Environment
 .env
 .env.local
