@@ -170,8 +170,7 @@
           <div class="flex items-center gap-1.5 mt-1">
             <select
               v-model="newMeta.key"
-              class="bg-[#333] rounded-sm px-1.5 py-0.5 text-[10px] text-gray-300 border-none outline-none appearance-none cursor-pointer hover:bg-[#444] pr-4"
-              style="background-image: url('data:image/svg+xml;charset=UTF-8,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%228%22 height=%228%22 viewBox=%220 0 12 12%22%3E%3Cpath fill=%22%239ca3af%22 d=%22M3 4.5L6 8l3-3.5H3z%22/%3E%3C/svg%3E'); background-repeat: no-repeat; background-position: right 4px center;"
+              class="select-field select-field-sm"
               @change="onMetaKeyChange"
             >
               <option value="">+ Add</option>
@@ -394,6 +393,49 @@
             class="w-20 accent-orange-500"
           />
         </div>
+        <!-- Sort controls -->
+        <div class="flex items-center gap-1.5">
+          <span class="text-[10px] text-gray-500">Sort</span>
+          <select
+            v-model="sortPrimary"
+            class="select-field select-field-sm"
+          >
+            <option value="relevancy">Relevancy</option>
+            <option value="path">Path</option>
+            <option value="timecode">Timecode</option>
+            <option value="duration">Duration</option>
+            <option value="resolution">Resolution</option>
+            <option value="fps">Frame Rate</option>
+            <option value="scene">Scene #</option>
+          </select>
+          <button
+            v-if="sortPrimary !== 'relevancy'"
+            @click="sortPrimaryDir = sortPrimaryDir === 'asc' ? 'desc' : 'asc'"
+            class="text-[10px] text-gray-400 hover:text-white px-1"
+            :title="sortPrimaryDir === 'asc' ? 'Ascending' : 'Descending'"
+          >{{ sortPrimaryDir === 'asc' ? '↑' : '↓' }}</button>
+          <template v-if="sortPrimary !== 'relevancy'">
+            <span class="text-[10px] text-gray-600">then</span>
+            <select
+              v-model="sortSecondary"
+              class="select-field select-field-sm"
+            >
+              <option value="">—</option>
+              <option value="path">Path</option>
+              <option value="timecode">Timecode</option>
+              <option value="duration">Duration</option>
+              <option value="resolution">Resolution</option>
+              <option value="fps">Frame Rate</option>
+              <option value="scene">Scene #</option>
+            </select>
+            <button
+              v-if="sortSecondary"
+              @click="sortSecondaryDir = sortSecondaryDir === 'asc' ? 'desc' : 'asc'"
+              class="text-[10px] text-gray-400 hover:text-white px-1"
+              :title="sortSecondaryDir === 'asc' ? 'Ascending' : 'Descending'"
+            >{{ sortSecondaryDir === 'asc' ? '↑' : '↓' }}</button>
+          </template>
+        </div>
       </div>
     </div>
 
@@ -405,12 +447,12 @@
 
     <!-- Results Grid -->
     <div
-      v-else-if="results.length > 0"
+      v-else-if="sortedResults.length > 0"
       class="grid gap-2"
       :style="{ gridTemplateColumns: `repeat(${thumbnailColumns}, minmax(0, 1fr))` }"
     >
       <div
-        v-for="(scene, idx) in results"
+        v-for="(scene, idx) in sortedResults"
         :key="scene.id"
         class="result-card group"
         @click="openScene(scene)"
@@ -776,6 +818,12 @@ import {
 // Constants
 const PAGE_SIZE = 40
 
+// Sort state
+const sortPrimary = ref('relevancy')
+const sortSecondary = ref('')
+const sortPrimaryDir = ref('desc')
+const sortSecondaryDir = ref('asc')
+
 // State
 const loading = ref(false)
 const thumbnailRefs = ref({})
@@ -871,6 +919,48 @@ const sceneDuration = computed(() => {
   const frameTime = 1 / fps
   return (selectedScene.value.end_time || 0) - (selectedScene.value.start_time || 0) - frameTime
 })
+
+// Sorted results
+const sortedResults = computed(() => {
+  if (sortPrimary.value === 'relevancy') {
+    return results.value // Already sorted by relevancy from API
+  }
+
+  const sorted = [...results.value]
+  sorted.sort((a, b) => {
+    // Primary sort
+    let cmp = compareByField(a, b, sortPrimary.value)
+    if (sortPrimaryDir.value === 'desc') cmp = -cmp
+
+    // Secondary sort (if primary is equal and secondary is set)
+    if (cmp === 0 && sortSecondary.value) {
+      cmp = compareByField(a, b, sortSecondary.value)
+      if (sortSecondaryDir.value === 'desc') cmp = -cmp
+    }
+
+    return cmp
+  })
+  return sorted
+})
+
+function compareByField(a, b, field) {
+  switch (field) {
+    case 'path':
+      return (a.filename || '').localeCompare(b.filename || '')
+    case 'timecode':
+      return (a.start_time || 0) - (b.start_time || 0)
+    case 'duration':
+      return ((a.end_time - a.start_time) || 0) - ((b.end_time - b.start_time) || 0)
+    case 'resolution':
+      return ((a.width || 0) * (a.height || 0)) - ((b.width || 0) * (b.height || 0))
+    case 'fps':
+      return (a.fps || 0) - (b.fps || 0)
+    case 'scene':
+      return (a.scene_index || 0) - (b.scene_index || 0)
+    default:
+      return 0
+  }
+}
 
 // EDL storage
 const EDL_STORAGE_KEY = 'fennec_edl_scenes'

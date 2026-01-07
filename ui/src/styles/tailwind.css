@@ -177,6 +177,38 @@
   @apply text-gray-500;
 }
 
+/* Select styling - custom dropdown that works cross-browser */
+.select-field {
+  @apply bg-[#262626] text-gray-300 rounded-sm border-none outline-none cursor-pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath fill='%239ca3af' d='M3 4.5L6 8l3-3.5H3z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+  padding-right: 20px;
+}
+
+.select-field:hover {
+  @apply bg-[#333];
+}
+
+.select-field:focus {
+  @apply ring-1 ring-orange-500;
+}
+
+/* Small variant for compact areas */
+.select-field-sm {
+  @apply text-[10px] px-1.5 py-0.5;
+  padding-right: 18px;
+  background-position: right 4px center;
+}
+
+/* Regular size */
+.select-field-md {
+  @apply text-xs px-2 py-1;
+}
+
 /* Control group */
 .control-group {
   @apply flex flex-col gap-1;
