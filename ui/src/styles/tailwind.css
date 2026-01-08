@@ -215,7 +215,7 @@
 }
 
 .control-label {
-  @apply text-xs text-gray-400 uppercase tracking-wide flex justify-between items-center;
+  @apply text-xs text-gray-400 uppercase tracking-wide flex justify-between items-center min-h-[22px];
 }
 
 /* Threshold input */

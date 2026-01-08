@@ -151,7 +151,7 @@
               <span class="category-swatch category-swatch-metadata"></span>
               Metadata
             </span>
-          </label>
+                      </label>
           <!-- Main row: lozenge container (same height as input-field) -->
           <div class="flex items-center gap-1 bg-[#262626] rounded-sm px-2 h-[34px] overflow-x-auto">
             <template v-if="metadataFilters.length === 0">
@@ -275,7 +275,7 @@
               Face Filter
             </span>
             <span class="flex items-center gap-1">
-              <span class="text-gray-500 text-[10px] normal-case">min</span>
+              <span class="text-gray-500 text-xs normal-case">min</span>
               <input
                 type="text"
                 v-model="thresholds.face"
@@ -301,7 +301,7 @@
               Visual Match
             </span>
             <span class="flex items-center gap-1">
-              <span class="text-gray-500 text-[10px] normal-case">min</span>
+              <span class="text-gray-500 text-xs normal-case">min</span>
               <input
                 type="text"
                 v-model="thresholds.visualMatch"
